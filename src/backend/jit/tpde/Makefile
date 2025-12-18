@@ -48,7 +48,19 @@ OBJS += \
 # 	llvmjit_deform.o \
 # 	llvmjit_expr.o
 
-all: all-shared-lib # llvmjit_types.bc
+tpde-lib: tpde-cmake
+	$(MAKE) `tpde_dummy
+
+CMAKE = cmake
+CMAKE_FLAGS = -D CMAKE_CXX_COMPILER=clang++ \
+	-D CMAKE_C_COMPILER=clang \
+	-D TPDE_INCLUDE_TESTS=OFF \
+	-D CMAKE_BUILD_TYPE=Debug
+
+tpde-cmake:
+	$(CMAKE) -S $(top_srcdir)/src/backend/jit/tpde -B $(top_builddir)/src/backend/jit/tpde $(CMAKE_FLAGS)
+	
+all: all-shared-lib tpde-lib # llvmjit_types.bc 
 
 install: all installdirs install-lib # install-types
 

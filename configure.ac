@@ -411,7 +411,7 @@ AS_IF([test "$with_llvm" = yes], [
 # TPDE
 #
 PGAC_ARG_BOOL(with, tpde, no, [build with TPDE based JIT support],
-              [AC_DEFINE([USE_TPDE], 1, [Define to 1 to build with TPDE based JIT support. (--with-)])])
+              [AC_DEFINE([USE_TPDE], 1, [Define to 1 to build with TPDE based JIT support. (--with-tpde)])])
 AC_SUBST(with_tpde)
 dnl must use AS_IF here, else AC_REQUIRES inside PGAC_LLVM_SUPPORT malfunctions
 AS_IF([test "$with_tpde" = yes], [
