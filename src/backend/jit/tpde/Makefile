@@ -49,7 +49,7 @@ OBJS += \
 # 	llvmjit_expr.o
 
 tpde-lib: tpde-cmake
-	$(MAKE) `tpde_dummy
+	$(MAKE) tpde_dummy
 
 CMAKE = cmake
 CMAKE_FLAGS = -D CMAKE_CXX_COMPILER=clang++ \
