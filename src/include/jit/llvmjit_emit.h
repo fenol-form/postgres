@@ -13,7 +13,7 @@
  * To avoid breaking cpluspluscheck, allow including the file even when LLVM
  * is not available.
  */
-#ifdef USE_LLVM
+#if defined(USE_LLVM) || defined(USE_TPDE)
 
 #include <llvm-c/Core.h>
 #include <llvm-c/Target.h>

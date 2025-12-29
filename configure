@@ -5482,11 +5482,11 @@ if test x$ac_prog_cxx_stdcxx = xno
 then :
   { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for $CXX option to enable C++11 features" >&5
 printf %s "checking for $CXX option to enable C++11 features... " >&6; }
-if test ${ac_cv_prog_cxx_11+y}
+if test ${ac_cv_prog_cxx_cxx11+y}
 then :
   printf %s "(cached) " >&6
 else $as_nop
-  ac_cv_prog_cxx_11=no
+  ac_cv_prog_cxx_cxx11=no
 ac_save_CXX=$CXX
 cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
@@ -5528,11 +5528,11 @@ if test x$ac_prog_cxx_stdcxx = xno
 then :
   { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for $CXX option to enable C++98 features" >&5
 printf %s "checking for $CXX option to enable C++98 features... " >&6; }
-if test ${ac_cv_prog_cxx_98+y}
+if test ${ac_cv_prog_cxx_cxx98+y}
 then :
   printf %s "(cached) " >&6
 else $as_nop
-  ac_cv_prog_cxx_98=no
+  ac_cv_prog_cxx_cxx98=no
 ac_save_CXX=$CXX
 cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
@@ -5933,9 +5933,218 @@ then :
   if test "$with_llvm" = yes
 then :
 
-    as_fn_error $? "Using two JIT providers simultaneously is not allowed" "$LINENO" 5
+    as_fn_error $? "Cannot use 2 JIT providers simultaneously (tpde / llvm)" "$LINENO" 5
 
 fi # fi
+  # TPDE requires LLVM
+
+
+
+
+  if test -z "$LLVM_CONFIG"; then
+  for ac_prog in llvm-config
+do
+  # Extract the first word of "$ac_prog", so it can be a program name with args.
+set dummy $ac_prog; ac_word=$2
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
+printf %s "checking for $ac_word... " >&6; }
+if test ${ac_cv_path_LLVM_CONFIG+y}
+then :
+  printf %s "(cached) " >&6
+else $as_nop
+  case $LLVM_CONFIG in
+  [\\/]* | ?:[\\/]*)
+  ac_cv_path_LLVM_CONFIG="$LLVM_CONFIG" # Let the user override the test with a path.
+  ;;
+  *)
+  as_save_IFS=$IFS; IFS=$PATH_SEPARATOR
+for as_dir in $PATH
+do
+  IFS=$as_save_IFS
+  case $as_dir in #(((
+    '') as_dir=./ ;;
+    */) ;;
+    *) as_dir=$as_dir/ ;;
+  esac
+    for ac_exec_ext in '' $ac_executable_extensions; do
+  if as_fn_executable_p "$as_dir$ac_word$ac_exec_ext"; then
+    ac_cv_path_LLVM_CONFIG="$as_dir$ac_word$ac_exec_ext"
+    printf "%s\n" "$as_me:${as_lineno-$LINENO}: found $as_dir$ac_word$ac_exec_ext" >&5
+    break 2
+  fi
+done
+  done
+IFS=$as_save_IFS
+
+  ;;
+esac
+fi
+LLVM_CONFIG=$ac_cv_path_LLVM_CONFIG
+if test -n "$LLVM_CONFIG"; then
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $LLVM_CONFIG" >&5
+printf "%s\n" "$LLVM_CONFIG" >&6; }
+else
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+fi
+
+
+  test -n "$LLVM_CONFIG" && break
+done
+
+else
+  # Report the value of LLVM_CONFIG in configure's output in all cases.
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for LLVM_CONFIG" >&5
+printf %s "checking for LLVM_CONFIG... " >&6; }
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $LLVM_CONFIG" >&5
+printf "%s\n" "$LLVM_CONFIG" >&6; }
+fi
+
+
+  # no point continuing if llvm wasn't found
+  if test -z "$LLVM_CONFIG"; then
+    as_fn_error $? "llvm-config not found, but required when compiling --with-llvm, specify with LLVM_CONFIG=" "$LINENO" 5
+  fi
+  # check if detected $LLVM_CONFIG is executable
+  pgac_llvm_version="$($LLVM_CONFIG --version 2> /dev/null || echo no)"
+  if test "x$pgac_llvm_version" = "xno"; then
+    as_fn_error $? "$LLVM_CONFIG does not work" "$LINENO" 5
+  fi
+  # and whether the version is supported
+  if echo $pgac_llvm_version | $AWK -F '.' '{ if ($1 >= 14) exit 1; else exit 0;}';then
+    as_fn_error $? "$LLVM_CONFIG version is $pgac_llvm_version but at least 14 is required" "$LINENO" 5
+  fi
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: using llvm $pgac_llvm_version" >&5
+printf "%s\n" "$as_me: using llvm $pgac_llvm_version" >&6;}
+
+  # need clang to create some bitcode files
+
+  if test -z "$CLANG"; then
+  for ac_prog in clang
+do
+  # Extract the first word of "$ac_prog", so it can be a program name with args.
+set dummy $ac_prog; ac_word=$2
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
+printf %s "checking for $ac_word... " >&6; }
+if test ${ac_cv_path_CLANG+y}
+then :
+  printf %s "(cached) " >&6
+else $as_nop
+  case $CLANG in
+  [\\/]* | ?:[\\/]*)
+  ac_cv_path_CLANG="$CLANG" # Let the user override the test with a path.
+  ;;
+  *)
+  as_save_IFS=$IFS; IFS=$PATH_SEPARATOR
+for as_dir in $PATH
+do
+  IFS=$as_save_IFS
+  case $as_dir in #(((
+    '') as_dir=./ ;;
+    */) ;;
+    *) as_dir=$as_dir/ ;;
+  esac
+    for ac_exec_ext in '' $ac_executable_extensions; do
+  if as_fn_executable_p "$as_dir$ac_word$ac_exec_ext"; then
+    ac_cv_path_CLANG="$as_dir$ac_word$ac_exec_ext"
+    printf "%s\n" "$as_me:${as_lineno-$LINENO}: found $as_dir$ac_word$ac_exec_ext" >&5
+    break 2
+  fi
+done
+  done
+IFS=$as_save_IFS
+
+  ;;
+esac
+fi
+CLANG=$ac_cv_path_CLANG
+if test -n "$CLANG"; then
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $CLANG" >&5
+printf "%s\n" "$CLANG" >&6; }
+else
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+fi
+
+
+  test -n "$CLANG" && break
+done
+
+else
+  # Report the value of CLANG in configure's output in all cases.
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for CLANG" >&5
+printf %s "checking for CLANG... " >&6; }
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $CLANG" >&5
+printf "%s\n" "$CLANG" >&6; }
+fi
+
+  if test -z "$CLANG"; then
+    as_fn_error $? "clang not found, but required when compiling --with-llvm, specify with CLANG=" "$LINENO" 5
+  fi
+  # make sure clang is executable
+  if test "x$($CLANG --version 2> /dev/null || echo no)" = "xno"; then
+    as_fn_error $? "$CLANG does not work" "$LINENO" 5
+  fi
+  # Could check clang version, but it doesn't seem that
+  # important. Systems with a new enough LLVM version are usually
+  # going to have a decent clang version too. It's also not entirely
+  # clear what the minimum version is.
+
+  # Collect compiler flags necessary to build the LLVM dependent
+  # shared library.
+  for pgac_option in `$LLVM_CONFIG --cppflags`; do
+    case $pgac_option in
+      -I*|-D*) LLVM_CPPFLAGS="$pgac_option $LLVM_CPPFLAGS";;
+    esac
+  done
+
+  for pgac_option in `$LLVM_CONFIG --ldflags`; do
+    case $pgac_option in
+      -L*) LLVM_LIBS="$LLVM_LIBS $pgac_option";;
+    esac
+  done
+
+  # ABI influencing options, standard influencing options
+  for pgac_option in `$LLVM_CONFIG --cxxflags`; do
+    case $pgac_option in
+      -fno-rtti*) LLVM_CXXFLAGS="$LLVM_CXXFLAGS $pgac_option";;
+      -std=*) LLVM_CXXFLAGS="$LLVM_CXXFLAGS $pgac_option";;
+    esac
+  done
+
+  # Look for components we're interested in, collect necessary
+  # libs. As some components are optional, we can't just list all of
+  # them as it'd raise an error.
+  pgac_components='';
+  for pgac_component in `$LLVM_CONFIG --components`; do
+    case $pgac_component in
+      engine) pgac_components="$pgac_components $pgac_component";;
+      debuginfodwarf) pgac_components="$pgac_components $pgac_component";;
+      orcjit) pgac_components="$pgac_components $pgac_component";;
+      passes) pgac_components="$pgac_components $pgac_component";;
+      native) pgac_components="$pgac_components $pgac_component";;
+      perfjitevents) pgac_components="$pgac_components $pgac_component";;
+    esac
+  done;
+
+  # And then get the libraries that need to be linked in for the
+  # selected components.  They're large libraries, we only want to
+  # link them into the LLVM using shared library.
+  for pgac_option in `$LLVM_CONFIG --libs --system-libs $pgac_components`; do
+    case $pgac_option in
+      -l*) LLVM_LIBS="$LLVM_LIBS $pgac_option";;
+    esac
+  done
+
+  LLVM_BINPATH=`$LLVM_CONFIG --bindir`
+
+
+
+
+
+
+
+
 
 fi # fi
 

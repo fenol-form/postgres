@@ -21,6 +21,8 @@ endif
 
 PGFILEDESC = "tpdejit - JIT using TPDE"
 NAME = tpdejit
+SHLIB_NAME = tpdejit
+MODULE_big = tpdejit
 
 ifeq ($(GCC), yes)
 LLVM_CFLAGS += -Wno-deprecated-declarations
@@ -29,44 +31,39 @@ endif
 CFLAGS += $(LLVM_CFLAGS)
 CXXFLAGS += $(LLVM_CXXFLAGS)
 override CPPFLAGS += $(LLVM_CPPFLAGS)
+SHLIB_LINK += $(LLVM_LIBS)
 
 # Because this module includes C++ files, we need to use a C++
 # compiler for linking. Makefile.shlib uses $(COMPILER) to build
 # loadable modules.
 override COMPILER = $(CXX) $(CXXFLAGS)
 
-# Infrastructure
 OBJS += \
-	dummy.o \
-# 	llvmjit_error.o \
-# 	llvmjit_inline.o \
-# 	llvmjit_wrap.o \
-# 	SectionMemoryManager.o
-
-# Code generation
-# OBJS += \
-# 	llvmjit_deform.o \
-# 	llvmjit_expr.o
+	tpde_expr.o \
+	llvm_ir_gen.o \
+	llvmjit_error.o \
+	llvmjit_inline.o
 
 tpde-lib: tpde-cmake
-	$(MAKE) tpde_dummy
+	$(MAKE) tpdejit
 
 CMAKE = cmake
 CMAKE_FLAGS = -D CMAKE_CXX_COMPILER=clang++ \
 	-D CMAKE_C_COMPILER=clang \
 	-D TPDE_INCLUDE_TESTS=OFF \
-	-D CMAKE_BUILD_TYPE=Debug
+	-D CMAKE_BUILD_TYPE=Debug \
+	-D CMAKE_INSTALL_PREFIX=$(top_builddir)/src/backend/jit/tpde/install
 
 tpde-cmake:
 	$(CMAKE) -S $(top_srcdir)/src/backend/jit/tpde -B $(top_builddir)/src/backend/jit/tpde $(CMAKE_FLAGS)
 	
-all: all-shared-lib tpde-lib # llvmjit_types.bc 
+all: tpde-lib all-shared-lib # llvmjit_types.bc 
 
-install: all installdirs install-lib # install-types
+install: tpde-lib all installdirs install-lib install-lib-shared# install-types
 
-installdirs: installdirs-lib
+installdirs: tpde-lib installdirs-lib
 
-uninstall: uninstall-lib uninstall-types
+uninstall: uninstall-lib # uninstall-types
 
 include $(top_srcdir)/src/Makefile.shlib
 

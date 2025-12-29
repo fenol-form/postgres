@@ -416,8 +416,10 @@ AC_SUBST(with_tpde)
 dnl must use AS_IF here, else AC_REQUIRES inside PGAC_LLVM_SUPPORT malfunctions
 AS_IF([test "$with_tpde" = yes], [
   AS_IF([test "$with_llvm" = yes], [
-    AC_MSG_ERROR([Using two JIT providers simultaneously is not allowed])
+    AC_MSG_ERROR([Cannot use 2 JIT providers simultaneously (tpde / llvm)])
   ]) # fi
+  # TPDE requires LLVM
+  PGAC_LLVM_SUPPORT()
 ]) # fi
 
 

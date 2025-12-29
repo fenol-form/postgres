@@ -1,0 +1,105 @@
+FROM ubuntu:24.04
+
+ENV TZ=Etc/UTC
+
+# Update package list and install basic dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg \
+    wget \
+    software-properties-common \
+    build-essential \
+    cmake \
+    ninja-build \
+    git \
+    flex \
+    bison \
+    tar \
+    pkg-config \
+    libreadline-dev \
+    perl \
+    bear \ # for make compilation database
+    sudo \
+    autoconf \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add LLVM repository
+RUN wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - && \
+    echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-19 main" > /etc/apt/sources.list.d/llvm.list && \
+    echo "deb-src http://apt.llvm.org/noble/ llvm-toolchain-noble-19 main" >> /etc/apt/sources.list.d/llvm.list
+
+# Install LLVM 19, Clang 19, and related tools
+RUN apt-get update && apt-get install -y \
+    clang-19 \
+    clang-tools-19 \
+    clang-format-19 \
+    clangd-19 \
+    lld-19 \
+    lldb-19 \
+    llvm-19 \
+    llvm-19-dev \
+    llvm-19-runtime \
+    llvm-19-tools \
+    libc++-19-dev \
+    libc++abi-19-dev \
+    libclang-19-dev \
+    libclang-rt-19-dev \
+    liblld-19-dev \
+    liblldb-19-dev \
+    libomp-19-dev \
+    libunwind-19-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install python
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3-pip \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create symlinks to make clang-19 and llvm-19 tools default
+RUN update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100 && \
+    update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100 && \
+    update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-19 100 && \
+    update-alternatives --install /usr/bin/llvm-symbolizer llvm-symbolizer /usr/bin/llvm-symbolizer-19 100 && \
+    update-alternatives --install /usr/bin/lld lld /usr/bin/lld-19 100 && \
+    update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-19 100 && \
+    update-alternatives --install /usr/bin/lldb lldb /usr/bin/lldb-19 100 && \
+    update-alternatives --install /usr/bin/lldb-server lldb-server /usr/bin/lldb-server-19 100
+
+# Set environment variables
+ENV CC=/usr/bin/clang
+ENV CXX=/usr/bin/clang++
+ENV LD=/usr/bin/lld
+
+# Verify installations
+RUN clang --version && \
+    clang++ --version && \
+    ld.lld --version && \
+    llvm-config --version
+
+# Create a working directory
+WORKDIR /postgres
+
+# Create user for postgres run
+RUN adduser evgeniy-pon -y
+RUN chmod -R -o 750 /
+RUN su evgeniy-pon
+
+# Generate TPDE Makefiles
+RUN mkdir src/backend/jit/tpde/tpde_build_tree && \
+    pushd . && \
+    cd src/backend/jit/tpde/tpde_build_tree && \
+    cmake -D CMAKE_CXX_COMPILER=clang++ -D CMAKE_C_COMPILER=clang -D TPDE_INCLUDE_TESTS=OFF -D CMAKE_BUILD_TYPE=Debug && \
+    popd
+
+# Build postgres, init database
+RUN mkdir build
+RUN ../configure --prefix=/postgres/build \
+    --with-tpde \
+    --enable-debug \
+    --enable-cassert \
+    --enable-profiling
+RUN bear -- make world-bin -j32
+RUN make install-world-bin -j32
+RUN ./bin/initdb -D /databases
