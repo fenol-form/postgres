@@ -38,9 +38,14 @@ SHLIB_LINK += $(LLVM_LIBS)
 # loadable modules.
 override COMPILER = $(CXX) $(CXXFLAGS)
 
+# tpde specific
 OBJS += \
 	tpde_expr.o \
 	llvm_ir_gen.o \
+	tpdejit.o
+
+# Copied from jit/llvm
+OBJS += \
 	llvmjit_error.o \
 	llvmjit_inline.o
 

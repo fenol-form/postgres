@@ -43,3 +43,11 @@ lib*.pc
 /Release/
 /tmp_install/
 /portlock/
+
+# Customs
+build/
+.vscode/
+.cache/
+configure~
+gmon.*
+pagila/

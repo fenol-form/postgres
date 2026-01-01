@@ -5,8 +5,8 @@
 #include "executor/execdebug.h"
 #include "executor/nodeAgg.h"
 #include "executor/nodeSubplan.h"
-#include "jit/llvmjit.h"
 #include "jit/llvmjit_emit.h"
+#include "jit/tpdejit.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
@@ -23,13 +23,7 @@
 #include "utils/typcache.h"
 #include "utils/xml.h"
 
-typedef struct CompiledExprState
-{
-	LLVMJitContext *context;
-	const char *funcname;
-} CompiledExprState;
-
-static LLVMValueRef BuildV1Call(LLVMJitContext *context, LLVMBuilderRef b,
+static LLVMValueRef BuildV1Call(struct LLVMJitContext *context, LLVMBuilderRef b,
 								LLVMModuleRef mod, FunctionCallInfo fcinfo,
 								LLVMValueRef *v_fcinfo_isnull);
 
@@ -50,12 +44,10 @@ static LLVMValueRef create_LifetimeEnd(LLVMModuleRef mod);
  * JIT compile expression.
  */
 bool
-llvm_compile_expr(ExprState *state)
+llvm_build_ir(ExprState *state, struct LLVMJitContext* context)
 {
 	PlanState  *parent = state->parent;
 	char	   *funcname;
-
-	LLVMJitContext *context = NULL;
 
 	LLVMBuilderRef b;
 	LLVMModuleRef mod;
@@ -116,13 +108,16 @@ llvm_compile_expr(ExprState *state)
 	Assert(parent);
 
 	/* get or create JIT context */
-	if (parent->state->es_jit)
-		context = (LLVMJitContext *) parent->state->es_jit;
-	else
-	{
-		context = llvm_create_context(parent->state->es_jit_flags);
-		parent->state->es_jit = &context->base;
-	}
+	
+	//// this is should be done in tpde_expr.c
+
+	// if (parent->state->es_jit)
+	// 	context = (LLVMJitContext *) parent->state->es_jit;
+	// else
+	// {
+	// 	context = llvm_create_context(parent->state->es_jit_flags);
+	// 	parent->state->es_jit = &context->base;
+	// }
 
 	INSTR_TIME_SET_CURRENT(starttime);
 
@@ -2931,15 +2926,12 @@ llvm_compile_expr(ExprState *state)
 	 */
 	{
 
-		CompiledExprState *cstate = palloc0(sizeof(CompiledExprState));
+		TPDECompiledExprState *cstate = palloc0(sizeof(TPDECompiledExprState));
 
 		cstate->context = context;
 		cstate->funcname = funcname;
 
-		state->evalfunc = ExecRunCompiledExpr;
 		state->evalfunc_private = cstate;
-
-		// TODO: there should be some TPDE invoking logic
 	}
 
 	llvm_leave_fatal_on_oom();
@@ -2951,36 +2943,8 @@ llvm_compile_expr(ExprState *state)
 	return true;
 }
 
-/*
- * Run compiled expression.
- *
- * This will only be called the first time a JITed expression is called. We
- * first make sure the expression is still up-to-date, and then get a pointer to
- * the emitted function. The latter can be the first thing that triggers
- * optimizing and emitting all the generated functions.
- */
-static Datum
-ExecRunCompiledExpr(ExprState *state, ExprContext *econtext, bool *isNull)
-{
-	CompiledExprState *cstate = state->evalfunc_private;
-	ExprStateEvalFunc func;
-
-	CheckExprStillValid(state, econtext);
-
-	llvm_enter_fatal_on_oom();
-	func = (ExprStateEvalFunc) llvm_get_function(cstate->context,
-												 cstate->funcname);
-	llvm_leave_fatal_on_oom();
-	Assert(func);
-
-	/* remove indirection via this function for future calls */
-	state->evalfunc = func;
-
-	return func(state, econtext, isNull);
-}
-
 static LLVMValueRef
-BuildV1Call(LLVMJitContext *context, LLVMBuilderRef b,
+BuildV1Call(struct LLVMJitContext *context, LLVMBuilderRef b,
 			LLVMModuleRef mod, FunctionCallInfo fcinfo,
 			LLVMValueRef *v_fcinfo_isnull)
 {

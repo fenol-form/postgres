@@ -10,7 +10,7 @@ add_subdirectory(tpde)
 
 set(TPDE_LOGGING ON)
 
-add_library(tpdejit SHARED tpde_expr.cpp llvm_ir_gen.c llvmjit_error.cpp llvmjit_inline.cpp llvmjit.c)
+add_library(tpdejit SHARED tpde_expr.cpp llvm_ir_gen.c llvmjit_error.cpp llvmjit_inline.cpp tpdejit.c)
 target_compile_options(tpdejit PUBLIC -g -O0)
 target_compile_definitions(tpdejit PUBLIC TPDE_LOGGING)
 
