@@ -47,7 +47,8 @@ OBJS += \
 # Copied from jit/llvm
 OBJS += \
 	llvmjit_error.o \
-	llvmjit_inline.o
+	llvmjit_inline.o \
+	llvmjit_wrap.o
 
 tpde-lib: tpde-cmake
 	$(MAKE) tpdejit
@@ -62,15 +63,22 @@ CMAKE_FLAGS = -D CMAKE_CXX_COMPILER=clang++ \
 tpde-cmake:
 	$(CMAKE) -S $(top_srcdir)/src/backend/jit/tpde -B $(top_builddir)/src/backend/jit/tpde $(CMAKE_FLAGS)
 	
-all: tpde-lib all-shared-lib # llvmjit_types.bc 
+all: tpde-lib all-shared-lib llvmjit_types.bc 
 
-install: tpde-lib all installdirs install-lib install-lib-shared# install-types
+install: tpde-lib all installdirs install-lib install-lib-shared install-types
 
 installdirs: tpde-lib installdirs-lib
 
-uninstall: uninstall-lib # uninstall-types
+uninstall: uninstall-lib uninstall-types
+
+install-types: llvmjit_types.bc
+	$(INSTALL_DATA) llvmjit_types.bc '$(DESTDIR)$(pkglibdir)'
+
+uninstall-types:
+	rm -f '$(DESTDIR)$(pkglibdir)/llvmjit_types.bc'
 
 include $(top_srcdir)/src/Makefile.shlib
 
 clean distclean: clean-lib
 	rm -f $(OBJS)
+	rm -f llvmjit_types.bc

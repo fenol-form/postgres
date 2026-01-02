@@ -23,6 +23,7 @@ make install-world-bin -j32
 
 ## Workaround until I get how Postgres install works
 cp src/backend/jit/tpde/tpdejit.so lib
+cp src/backend/jit/tpde/llvmjit_types.bc lib
 
 rm -rf /data
 ./bin/initdb -D /data -c log_min_messages=debug5
@@ -32,6 +33,8 @@ echo "jit_above_cost = 0" >> /data/postgresql.conf
 echo "jit = on" >> /data/postgresql.conf
 echo "jit_optimize_above_cost = 0" >> /data/postgresql.conf
 echo "jit_inline_above_cost = 0" >> /data/postgresql.conf
+
+./bin/pg_ctl stop -D /data
 
 ./bin/pg_ctl -D /data -l /logfile start
 ./bin/psql -d template1 -f /postgres/pagila/pagila-schema.sql

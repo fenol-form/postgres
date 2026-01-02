@@ -9,6 +9,7 @@
 #include "jit/jit.h"
 #include "nodes/pg_list.h"
 #include "jit/llvmjit.h"
+#include "jit/llvmjit_emit.h"
 
 /*
  * File needs to be includable by both C and C++ code, and include other
@@ -27,6 +28,9 @@ typedef struct TPDECompiledExprState
 } TPDECompiledExprState;
 
 extern bool llvm_build_ir(struct ExprState *state, struct LLVMJitContext* context);
+
+extern LLVMJitContext *llvm_create_context(int jitFlags);
+
 
 #ifdef __cplusplus
 } /* extern "C" */

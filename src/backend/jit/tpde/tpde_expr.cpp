@@ -1,3 +1,5 @@
+extern "C"
+{
 #include "c.h"
 #include "postgres.h"
 
@@ -7,23 +9,28 @@
 #include "jit/tpdejit.h"
 #include "nodes/execnodes.h"
 #include "utils/elog.h"
-
+}
 
 static void tpde_release_context(JitContext *context);
 static void tpde_reset_after_error(void);
 static ExprStateEvalFunc tpde_get_compiled_expr(TPDECompiledExprState* cstate);
 extern bool tpde_compile_expr(ExprState *state);
 
-PG_MODULE_MAGIC_EXT(
-					.name = "tpdejit",
-					.version = PG_VERSION
-); // include/server/fmgr.h:441
-
 
 static LLVMJitContext* retrieve_or_init_jit_context(ExprState* state) 
 {
-	// Not implemented
-	return NULL;
+	LLVMJitContext *context = NULL;
+
+	llvm_enter_fatal_on_oom();
+
+	if (state->parent->state->es_jit)
+		context = (LLVMJitContext *) state->parent->state->es_jit;
+	else
+	{
+		context = llvm_create_context(state->parent->state->es_jit_flags);
+		state->parent->state->es_jit = &context->base;
+	}
+	return context;
 }
 
 // static 
@@ -65,6 +72,7 @@ bool tpde_compile_expr(ExprState *state)
 
 static ExprStateEvalFunc tpde_get_compiled_expr(TPDECompiledExprState* cstate)
 {
+	elog(FATAL, "CODE EMITTING IS NOT IMPLEMENTED SO FAR");
 	// Not implemented
 	return NULL;
 }
