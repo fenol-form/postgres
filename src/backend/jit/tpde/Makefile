@@ -11,6 +11,14 @@
 #
 #-------------------------------------------------------------------------
 
+ifeq ($(PORTNAME), win32)
+    $(error "TPDE JIT is not supported on Windows")
+endif
+
+ifeq ($(PORTNAME), cygwin)
+    $(error "TPDE JIT is not supported on Cygwin")
+endif
+
 subdir = src/backend/jit/tpde
 top_builddir = ../../../..
 include $(top_builddir)/src/Makefile.global
@@ -30,7 +38,11 @@ endif
 
 CFLAGS += $(LLVM_CFLAGS)
 CXXFLAGS += $(LLVM_CXXFLAGS)
+CXXFLAGS += -Wl,--gc-sections
 override CPPFLAGS += $(LLVM_CPPFLAGS)
+CPPFLAGS += -Wl,--gc-sections
+CFLAGS += -Wl,--gc-sections
+
 SHLIB_LINK += $(LLVM_LIBS)
 
 # Because this module includes C++ files, we need to use a C++
@@ -42,7 +54,18 @@ override COMPILER = $(CXX) $(CXXFLAGS)
 OBJS += \
 	tpde_expr.o \
 	llvm_ir_gen.o \
-	tpdejit.o
+	tpdejit.o \
+	install/lib/libtpde.a \
+	install/lib/libtpde_llvm.a \
+	install/lib/libfadec.a \
+	install/lib/libdisarm64.a \
+	install/lib/libspdlogd.a
+
+install/lib/libtpde.a: tpde-lib
+install/lib/libtpde_llvm.a: tpde-lib
+install/lib/libfadec.a: tpde-lib
+install/lib/libdisarm64.a: tpde-lib
+install/lib/libspdlogd.a: tpde-lib
 
 # Copied from jit/llvm
 OBJS += \
@@ -51,7 +74,7 @@ OBJS += \
 	llvmjit_wrap.o
 
 tpde-lib: tpde-cmake
-	$(MAKE) tpdejit
+	$(MAKE) tpde tpde_llvm && $(MAKE) install
 
 CMAKE = cmake
 CMAKE_FLAGS = -D CMAKE_CXX_COMPILER=clang++ \
@@ -62,7 +85,7 @@ CMAKE_FLAGS = -D CMAKE_CXX_COMPILER=clang++ \
 
 tpde-cmake:
 	$(CMAKE) -S $(top_srcdir)/src/backend/jit/tpde -B $(top_builddir)/src/backend/jit/tpde $(CMAKE_FLAGS)
-	
+
 all: tpde-lib all-shared-lib llvmjit_types.bc 
 
 install: tpde-lib all installdirs install-lib install-lib-shared install-types

@@ -22,14 +22,12 @@
 #include "utils/memutils.h"
 #include "utils/resowner.h"
 
-// typedef struct LLVMJitHandle
-// {
-// 	LLVMOrcLLJITRef lljit;
-// 	LLVMOrcResourceTrackerRef resource_tracker;
-// } LLVMJitHandle; 
+typedef struct LLVMJitHandle
+{
+	LLVMOrcLLJITRef lljit;
+	LLVMOrcResourceTrackerRef resource_tracker;
+} LLVMJitHandle; 
 // что-то свое должно быть ?
-
-/* types & functions commonly needed for JITing */
 
 
 PG_MODULE_MAGIC_EXT(
@@ -39,6 +37,7 @@ PG_MODULE_MAGIC_EXT(
 
 #define LLVMJIT_LLVM_CONTEXT_REUSE_MAX 100
 
+/* types & functions commonly needed for JITing */
 LLVMTypeRef TypeSizeT;
 LLVMTypeRef TypeDatum;
 LLVMTypeRef TypeParamBool;
@@ -87,7 +86,6 @@ static LLVMOrcLLJITRef llvm_opt0_orc;
 static LLVMOrcLLJITRef llvm_opt3_orc;
 
 
-// static void llvm_release_context(JitContext *context);
 static void llvm_session_initialize(void);
 static void llvm_shutdown(int code, Datum arg);
 // static void llvm_compile_module(LLVMJitContext *context);
@@ -123,6 +121,67 @@ static inline void
 ResourceOwnerForgetJIT(ResourceOwner owner, LLVMJitContext *handle)
 {
 	ResourceOwnerForget(owner, PointerGetDatum(handle), &jit_resowner_desc);
+}
+
+void
+llvm_release_context(JitContext *context)
+{
+	LLVMJitContext *llvm_jit_context = (LLVMJitContext *) context;
+	ListCell   *lc;
+
+	/*
+	 * Consider as cleaned up even if we skip doing so below, that way we can
+	 * verify the tracking is correct (see llvm_shutdown()).
+	 */
+	llvm_jit_context_in_use_count--;
+
+	/*
+	 * When this backend is exiting, don't clean up LLVM. As an error might
+	 * have occurred from within LLVM, we do not want to risk reentering. All
+	 * resource cleanup is going to happen through process exit.
+	 */
+	if (proc_exit_inprogress)
+		return;
+
+	llvm_enter_fatal_on_oom();
+
+	if (llvm_jit_context->module)
+	{
+		LLVMDisposeModule(llvm_jit_context->module);
+		llvm_jit_context->module = NULL;
+	}
+
+	foreach(lc, llvm_jit_context->handles)
+	{
+		LLVMJitHandle *jit_handle = (LLVMJitHandle *) lfirst(lc);
+
+		{
+			LLVMOrcExecutionSessionRef ee;
+			LLVMOrcSymbolStringPoolRef sp;
+
+			LLVMOrcResourceTrackerRemove(jit_handle->resource_tracker);
+			LLVMOrcReleaseResourceTracker(jit_handle->resource_tracker);
+
+			/*
+			 * Without triggering cleanup of the string pool, we'd leak
+			 * memory. It'd be sufficient to do this far less often, but in
+			 * experiments the required time was small enough to just always
+			 * do it.
+			 */
+			ee = LLVMOrcLLJITGetExecutionSession(jit_handle->lljit);
+			sp = LLVMOrcExecutionSessionGetSymbolStringPool(ee);
+			LLVMOrcSymbolStringPoolClearDeadEntries(sp);
+		}
+
+		pfree(jit_handle);
+	}
+	list_free(llvm_jit_context->handles);
+	llvm_jit_context->handles = NIL;
+
+	llvm_leave_fatal_on_oom();
+
+	if (llvm_jit_context->resowner)
+		ResourceOwnerForgetJIT(llvm_jit_context->resowner, llvm_jit_context);
 }
 
 /*
@@ -202,13 +261,21 @@ llvm_session_initialize(void)
 	LLVMLoadLibraryPermanently(NULL);
 
 	{
+		elog(INFO, "%s", "RIGHT BEFORE CREATING TPDE COMPILER");
+
 		llvm_ts_context = LLVMOrcCreateNewThreadSafeContext();
+        tpde_create_compiler();
 
-		llvm_opt0_orc = llvm_create_jit_instance(opt0_tm);
-		opt0_tm = 0;
+		elog(INFO, "%s", "RIGHT AFTER CREATING TPDE COMPILER");
 
-		llvm_opt3_orc = llvm_create_jit_instance(opt3_tm);
-		opt3_tm = 0;
+        
+        // no need as we using TPDE engine
+        
+		// llvm_opt0_orc = llvm_create_jit_instance(opt0_tm);
+		// opt0_tm = 0;
+
+		// llvm_opt3_orc = llvm_create_jit_instance(opt3_tm);
+		// opt3_tm = 0;
 	}
 
 	on_proc_exit(llvm_shutdown, 0);
