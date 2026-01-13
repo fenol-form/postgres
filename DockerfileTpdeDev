@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y \
     sudo \
     autoconf \
     gdb \
+    vim \
     && rm -rf /var/lib/apt/lists/*
 
 # Add LLVM repository
@@ -83,24 +84,11 @@ RUN clang --version && \
 WORKDIR /postgres
 
 # Create user for postgres run
-RUN adduser evgeniy-pon -y
-RUN chmod -R -o 750 /
+ARG USER_ID
+ARG GROUP_ID
+RUN groupadd -g ${GROUP_ID} evgeniy-pon
+RUN adduser --uid ${USER_ID} --gid {GROUP_ID} evgeniy-pon -y
+RUN adduser evgeniy-pon sudo
+RUN usermod --shell /bin/bash evgeniy-pon
+# RUN chmod -R -o 750 /
 RUN su evgeniy-pon
-
-# Generate TPDE Makefiles
-RUN mkdir src/backend/jit/tpde/tpde_build_tree && \
-    pushd . && \
-    cd src/backend/jit/tpde/tpde_build_tree && \
-    cmake -D CMAKE_CXX_COMPILER=clang++ -D CMAKE_C_COMPILER=clang -D TPDE_INCLUDE_TESTS=OFF -D CMAKE_BUILD_TYPE=Debug && \
-    popd
-
-# Build postgres, init database
-RUN mkdir build
-RUN ../configure --prefix=/postgres/build \
-    --with-tpde \
-    --enable-debug \
-    --enable-cassert \
-    --enable-profiling
-RUN bear -- make world-bin -j32
-RUN make install-world-bin -j32
-RUN ./bin/initdb -D /databases
