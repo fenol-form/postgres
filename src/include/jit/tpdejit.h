@@ -27,12 +27,14 @@ typedef struct TPDECompiledExprState
 	const char *funcname;
 } TPDECompiledExprState;
 
-void tpde_create_compiler();
+void tpde_create_compiler(const char * llvm_triple);
 
 extern bool llvm_build_ir(struct ExprState *state, struct LLVMJitContext* context);
 
 extern LLVMJitContext *llvm_create_context(int jitFlags);
 void llvm_release_context(JitContext* context);
+void llvm_compile_module(LLVMJitContext *context);
+void tpde_add_llvm_ir_module(LLVMJitContext* context);
 
 
 #ifdef __cplusplus

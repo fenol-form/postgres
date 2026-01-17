@@ -3,9 +3,8 @@ operation="$1"
 if [ -d "build" ]; then
     ./build/bin/pg_ctl -D data stop
 fi
-# if [ "$operation" = "from_scratch" ]; then
 
-rm /logfile
+rm logfile
 
 if [ "$operation" != "dont_rebuild" ]; then
     rm -rf build
@@ -16,6 +15,7 @@ pushd build
 
 # fi
 
+export CFLAGS='-O0'
 ../configure --prefix=/postgres/build --with-tpde --enable-debug --enable-cassert --enable-profiling
 bear -- make world-bin -j32
 make install-world-bin -j32
@@ -23,15 +23,14 @@ make install-world-bin -j32
 ## Workaround until I get how Postgres install works
 cp src/backend/jit/tpde/tpdejit.so src/backend/jit/tpde/llvmjit_types.bc lib/
 
-if [ "$operation" = "remake_data" ]; then
-    rm -rf data
-    ./bin/initdb -D data -c log_min_messages=debug5
-    echo "jit_provider = 'tpdejit'" >> data/postgresql.conf
-    echo "jit_above_cost = 0" >> data/postgresql.conf
-    echo "jit = on" >> data/postgresql.conf
-    echo "jit_optimize_above_cost = 0" >> data/postgresql.conf
-    echo "jit_inline_above_cost = 0" >> data/postgresql.conf
-fi
+# if [ "$operation" = "remake_data" ]; then
+./bin/initdb -D data -c log_min_messages=debug5
+echo "jit_provider = 'tpdejit'" >> data/postgresql.conf
+echo "jit_above_cost = 0" >> data/postgresql.conf
+echo "jit = on" >> data/postgresql.conf
+echo "jit_optimize_above_cost = 0" >> data/postgresql.conf
+echo "jit_inline_above_cost = 0" >> data/postgresql.conf
+# fi
 
 ./bin/pg_ctl stop -D data
 ./bin/pg_ctl -D data -l logfile start

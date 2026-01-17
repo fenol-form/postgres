@@ -1,7 +1,10 @@
 #include <cstdint>
 #include <llvm-19/llvm/ADT/StringExtras.h>
+#include <llvm-19/llvm/Bitcode/BitcodeReader.h>
 #include <llvm-19/llvm/ExecutionEngine/JITSymbol.h>
 #include <llvm-19/llvm/ExecutionEngine/Orc/Core.h>
+#include <llvm-19/llvm/ExecutionEngine/Orc/DebugObjectManagerPlugin.h>
+#include <llvm-19/llvm/ExecutionEngine/Orc/Debugging/DebuggerSupportPlugin.h>
 #include <llvm-19/llvm/ExecutionEngine/Orc/ExecutionUtils.h>
 #include <llvm-19/llvm/ExecutionEngine/Orc/IRCompileLayer.h>
 #include <llvm-19/llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h>
@@ -10,8 +13,13 @@
 #include <llvm-19/llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
 #include <llvm-19/llvm/ExecutionEngine/Orc/Shared/ExecutorSymbolDef.h>
 #include <llvm-19/llvm/ExecutionEngine/Orc/SymbolStringPool.h>
+#include <llvm-19/llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
+#include <llvm-19/llvm/ExecutionEngine/RuntimeDyld.h>
+#include <llvm-19/llvm/ExecutionEngine/JITEventListener.h>
 #include <llvm-19/llvm/IR/DataLayout.h>
+#include <llvm-19/llvm/IR/LLVMContext.h>
 #include <llvm-19/llvm/IR/Module.h>
+#include <llvm-19/llvm/Support/CodeGen.h>
 #include <llvm-19/llvm/Support/DynamicLibrary.h>
 #include <llvm-19/llvm/Support/Error.h>
 #include <llvm-19/llvm/Target/TargetMachine.h>
@@ -38,6 +46,8 @@ extern "C"
 
 static bool lljit_initialized = false;
 static std::unique_ptr<llvm::orc::LLJIT> lljit;
+static llvm::orc::ResourceTrackerSP resource_tracker;
+static llvm::orc::ThreadSafeContext llvm_ts_context;
 
 
 static void tpde_release_context(JitContext *context);
@@ -107,12 +117,19 @@ public:
 };
 
 
-void tpde_create_compiler(/*TargetMachine but it should be NULL for TPDE*/) {
+void tpde_create_compiler(const char * llvm_triple /*, TargetMachine should be NULL for TPDE*/) {
 	using namespace llvm;
 	using namespace tpde_llvm;
 	ExitOnError ExitOnErr;
 	auto builder = orc::LLJITBuilder();
 	assert(!lljit_initialized);
+
+	auto llvm_triple_unwrapped = llvm::Triple(llvm_triple);
+	auto jtmb = llvm::orc::JITTargetMachineBuilder(llvm_triple_unwrapped);
+	// jtmb.setRelocationModel(llvm::Reloc::Model::PIC_); ?
+	// jtmb.setCodeGenOptLevel(CodeGenOptLevel OptLevel) ?
+	// jtmb.setCodeModel(llvm::CodeModel::Small); ?
+	builder.setJITTargetMachineBuilder(std::move(jtmb));
 
 	builder.CreateCompileFunction = [](orc::JITTargetMachineBuilder jtmb) 
 		-> Expected<std::unique_ptr<orc::IRCompileLayer::IRCompiler>>
@@ -122,12 +139,11 @@ void tpde_create_compiler(/*TargetMachine but it should be NULL for TPDE*/) {
 	};
 
 	// see what builder takes at llvmjit.c:1220 :
-	// builder.CreateObjectLinkingLayer = []()
+	// see llvmjit.c:1172 there is event listeners definition for JIT debugging
 	builder.CreateObjectLinkingLayer = [](orc::ExecutionSession& ES, const Triple& triple)
 		-> Expected<std::unique_ptr<orc::ObjectLayer>>
 	{
 		return std::make_unique<orc::ObjectLinkingLayer>(ES);
-		// see llvmjit.c:1172 there is event listeners definition for JIT debugging
 	};
 	lljit = ExitOnErr(builder.create());
 
@@ -136,14 +152,32 @@ void tpde_create_compiler(/*TargetMachine but it should be NULL for TPDE*/) {
 		elog(WARNING, "error during JITing: %s", strerr.c_str());
 	});
 
+	// try to add debug plugin
 	auto& main_jit_dylib = lljit->getMainJITDylib();
+	auto debuggingPluginPtr = std::shared_ptr<llvm::orc::GDBJITDebugInfoRegistrationPlugin>(nullptr);
+	if (auto debuggingPlugin = llvm::orc::GDBJITDebugInfoRegistrationPlugin::Create(lljit->getExecutionSession(), main_jit_dylib, llvm_triple_unwrapped)) {
+		debuggingPluginPtr = std::shared_ptr<llvm::orc::GDBJITDebugInfoRegistrationPlugin>(debuggingPlugin->release());
+		static_cast<orc::ObjectLinkingLayer&>(lljit->getObjLinkingLayer()).addPlugin(debuggingPluginPtr);
+	} else {
+		auto error = debuggingPlugin.takeError();
+		elog(WARNING, "failed to create debuggingPlugin: %s", llvm::toString(std::move(error)).data());	
+	}
+	
+	// add generators
 	char global_prefix = lljit->getDataLayout().getGlobalPrefix();
-
 	auto main_gen = llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(global_prefix);
 	main_jit_dylib.addGenerator(ExitOnErr(std::move(main_gen)));
 
 	auto ref_gen = std::make_unique<CustomResolveSymbolGenerator>();
 	main_jit_dylib.addGenerator(std::move(ref_gen));
+
+	// save resource tracker
+	resource_tracker = lljit->getMainJITDylib().getDefaultResourceTracker();
+	elog(DEBUG1, "Resource Tracker: %p", resource_tracker.get());
+
+	// create thread-safe context
+	auto llvm_context = std::make_unique<llvm::LLVMContext>();
+	llvm_ts_context = llvm::orc::ThreadSafeContext(std::move(llvm_context));
 
 	lljit_initialized = true;
 }
@@ -186,11 +220,6 @@ bool tpde_compile_expr(ExprState *state)
 {
 	elog(DEBUG1, "%s", "Trying to compile JIT\n");
 	
-	// some initialization
-	// TODO: переименовать llvm_compile_expr во что-то более подходящее типа build_ir
-	//       выпилить оттуда всё, что не связано с switch(opcode) (инициализация сессии и непосрелственно кодген, оставить это здесь)
-
-	// context / session initialization
 	LLVMJitContext* context = retrieve_or_init_jit_context(state);
 
 	// building llvm IR
@@ -201,20 +230,80 @@ bool tpde_compile_expr(ExprState *state)
 	
 	TPDECompiledExprState *cstate = (TPDECompiledExprState*)(state->evalfunc_private);
 	Assert(cstate);
+
 	// compile and link to binary via tpde
+	llvm_enter_fatal_on_oom();
+
+	elog(DEBUG1, "%s", "Before codegen");
 	ExprStateEvalFunc func = tpde_codegen(cstate);
+	elog(DEBUG1, "JIT compilation finished, func ptr: %p", (void*)func);
+
+	llvm_leave_fatal_on_oom();
+
 	Assert(func);
+	/* remove indirection via this function for future calls */
 	state->evalfunc = func;
 
 	return true;
 }
 
+void tpde_add_llvm_ir_module(LLVMJitContext* context)
+{
+	auto module = std::unique_ptr<llvm::Module>(llvm::unwrap(context->module));
+	
+	// takes ownership of module
+	auto ts = llvm::orc::ThreadSafeModule(std::move(module), llvm_ts_context);
+	elog(DEBUG1, "%s", "Adding IR module to LLJIT");
+	context->module = NULL; /* will be owned by LLJIT */
+	if (auto error = lljit->addIRModule(std::move(ts))) {
+		elog(DEBUG1, "%s", "Tried to emit code");
+		elog(ERROR, "failed to JIT module: %s", llvm::toString(std::move(error)).data());	
+	}
+	elog(DEBUG1, "%s", "Successfully added IR module to LLJIT");
+}
+
 static ExprStateEvalFunc tpde_codegen(TPDECompiledExprState* cstate)
 {
-	elog(FATAL, "CODE EMITTING IS NOT IMPLEMENTED SO FAR");
-	// Not implemented
+	llvm_assert_in_fatal_section();
+
+	if (!cstate->context->compiled) {
+		elog(DEBUG1, "%s", "Compiling module");
+		llvm_compile_module(cstate->context);	
+	}
+	elog(DEBUG1, "%s", "Module compiled");
+
+	llvm::ExitOnError ExitOnErr;
+
+	instr_time	starttime;
+	instr_time	endtime;
+
+	INSTR_TIME_SET_CURRENT(starttime);
+
+	auto execAddr = lljit->lookup(cstate->funcname);
+	if (auto error = execAddr.takeError()) {
+		elog(ERROR, "failed to look up symbol \"%s\": %s",
+				cstate->funcname, llvm::toString(std::move(error)).data());
+	}
+
+	/*
+		* LLJIT only actually emits code the first time a symbol is
+		* referenced. Thus add lookup time to emission time. That's counting
+		* a bit more than with older LLVM versions, but unlikely to ever
+		* matter.
+		*/
+	INSTR_TIME_SET_CURRENT(endtime);
+	INSTR_TIME_ACCUM_DIFF(cstate->context->base.instr.emission_counter,
+							endtime, starttime);
+
+	if (execAddr)
+		return (ExprStateEvalFunc) (uintptr_t) execAddr->getValue();
+
+	elog(ERROR, "failed to JIT: %s", cstate->funcname);
+
 	return NULL;
 }
+
+
 
 void _PG_jit_provider_init(JitProviderCallbacks *cb)
 {

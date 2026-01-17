@@ -27,7 +27,6 @@ typedef struct LLVMJitHandle
 	LLVMOrcLLJITRef lljit;
 	LLVMOrcResourceTrackerRef resource_tracker;
 } LLVMJitHandle; 
-// что-то свое должно быть ?
 
 
 PG_MODULE_MAGIC_EXT(
@@ -88,16 +87,11 @@ static LLVMOrcLLJITRef llvm_opt3_orc;
 
 static void llvm_session_initialize(void);
 static void llvm_shutdown(int code, Datum arg);
-// static void llvm_compile_module(LLVMJitContext *context);
 static void llvm_optimize_module(LLVMJitContext *context, LLVMModuleRef module);
 
 static void llvm_create_types(void);
 static void llvm_set_target(void);
 static void llvm_recreate_llvm_context(void);
-static uint64_t llvm_resolve_symbol(const char *name, void *ctx);
-
-static LLVMOrcLLJITRef llvm_create_jit_instance(LLVMTargetMachineRef tm);
-static char *llvm_error_message(LLVMErrorRef error);
 
 /* ResourceOwner callbacks to hold JitContexts  */
 static void ResOwnerReleaseJitContext(Datum res);
@@ -108,7 +102,7 @@ static const ResourceOwnerDesc jit_resowner_desc =
 	.release_phase = RESOURCE_RELEASE_BEFORE_LOCKS,
 	.release_priority = RELEASE_PRIO_JIT_CONTEXTS,
 	.ReleaseResource = ResOwnerReleaseJitContext,
-	.DebugPrint = NULL			/* the default message is fine */
+	.DebugPrint = NULL
 };
 
 /* Convenience wrappers over ResourceOwnerRemember/Forget */
@@ -159,6 +153,7 @@ llvm_release_context(JitContext *context)
 			LLVMOrcExecutionSessionRef ee;
 			LLVMOrcSymbolStringPoolRef sp;
 
+
 			LLVMOrcResourceTrackerRemove(jit_handle->resource_tracker);
 			LLVMOrcReleaseResourceTracker(jit_handle->resource_tracker);
 
@@ -194,8 +189,8 @@ llvm_session_initialize(void)
 	char	   *error = NULL;
 	char	   *cpu = NULL;
 	char	   *features = NULL;
-	LLVMTargetMachineRef opt0_tm;
-	LLVMTargetMachineRef opt3_tm;
+	// LLVMTargetMachineRef opt0_tm;
+	// LLVMTargetMachineRef opt3_tm;
 
 	if (llvm_session_initialized)
 		return;
@@ -241,16 +236,16 @@ llvm_session_initialize(void)
 	elog(DEBUG2, "LLVMJIT detected CPU \"%s\", with features \"%s\"",
 		 cpu, features);
 
-	opt0_tm =
-		LLVMCreateTargetMachine(llvm_targetref, llvm_triple, cpu, features,
-								LLVMCodeGenLevelNone,
-								LLVMRelocDefault,
-								LLVMCodeModelJITDefault);
-	opt3_tm =
-		LLVMCreateTargetMachine(llvm_targetref, llvm_triple, cpu, features,
-								LLVMCodeGenLevelAggressive,
-								LLVMRelocDefault,
-								LLVMCodeModelJITDefault);
+	// opt0_tm =
+	// 	LLVMCreateTargetMachine(llvm_targetref, llvm_triple, cpu, features,
+	// 							LLVMCodeGenLevelNone,
+	// 							LLVMRelocDefault,
+	// 							LLVMCodeModelJITDefault);
+	// opt3_tm =
+	// 	LLVMCreateTargetMachine(llvm_targetref, llvm_triple, cpu, features,
+	// 							LLVMCodeGenLevelAggressive,
+	// 							LLVMRelocDefault,
+	// 							LLVMCodeModelJITDefault);
 
 	LLVMDisposeMessage(cpu);
 	cpu = NULL;
@@ -261,21 +256,8 @@ llvm_session_initialize(void)
 	LLVMLoadLibraryPermanently(NULL);
 
 	{
-		elog(INFO, "%s", "RIGHT BEFORE CREATING TPDE COMPILER");
-
 		llvm_ts_context = LLVMOrcCreateNewThreadSafeContext();
-        tpde_create_compiler();
-
-		elog(INFO, "%s", "RIGHT AFTER CREATING TPDE COMPILER");
-
-        
-        // no need as we using TPDE engine
-        
-		// llvm_opt0_orc = llvm_create_jit_instance(opt0_tm);
-		// opt0_tm = 0;
-
-		// llvm_opt3_orc = llvm_create_jit_instance(opt3_tm);
-		// opt3_tm = 0;
+        tpde_create_compiler(llvm_triple);
 	}
 
 	on_proc_exit(llvm_shutdown, 0);
@@ -560,72 +542,6 @@ llvm_set_target(void)
 }
 
 
-static char *
-llvm_error_message(LLVMErrorRef error)
-{
-	char	   *orig = LLVMGetErrorMessage(error);
-	char	   *msg = pstrdup(orig);
-
-	LLVMDisposeErrorMessage(orig);
-
-	return msg;
-}
-
-
-/*
- * We cannot throw errors through LLVM (without causing a FATAL at least), so
- * just use WARNING here. That's OK anyway, as the error is also reported at
- * the top level action (with less detail) and there might be multiple
- * invocations of errors with details.
- *
- * This doesn't really happen during normal operation, but in cases like
- * symbol resolution breakage. So just using elog(WARNING) is fine.
- */
-static void
-llvm_log_jit_error(void *ctx, LLVMErrorRef error)
-{
-	elog(WARNING, "error during JITing: %s",
-		 llvm_error_message(error));
-}
-
-
-/*
- * Create our own object layer, so we can add event listeners.
- */
-static LLVMOrcObjectLayerRef
-llvm_create_object_layer(void *Ctx, LLVMOrcExecutionSessionRef ES, const char *Triple)
-{
-#ifdef USE_LLVM_BACKPORT_SECTION_MEMORY_MANAGER
-	LLVMOrcObjectLayerRef objlayer =
-		LLVMOrcCreateRTDyldObjectLinkingLayerWithSafeSectionMemoryManager(ES);
-#else
-	LLVMOrcObjectLayerRef objlayer =
-		LLVMOrcCreateRTDyldObjectLinkingLayerWithSectionMemoryManager(ES);
-#endif
-
-
-#if defined(HAVE_DECL_LLVMCREATEGDBREGISTRATIONLISTENER) && HAVE_DECL_LLVMCREATEGDBREGISTRATIONLISTENER
-	if (jit_debugging_support)
-	{
-		LLVMJITEventListenerRef l = LLVMCreateGDBRegistrationListener();
-
-		LLVMOrcRTDyldObjectLinkingLayerRegisterJITEventListener(objlayer, l);
-	}
-#endif
-
-#if defined(HAVE_DECL_LLVMCREATEPERFJITEVENTLISTENER) && HAVE_DECL_LLVMCREATEPERFJITEVENTLISTENER
-	if (jit_profiling_support)
-	{
-		LLVMJITEventListenerRef l = LLVMCreatePerfJITEventListener();
-
-		LLVMOrcRTDyldObjectLinkingLayerRegisterJITEventListener(objlayer, l);
-	}
-#endif
-
-	return objlayer;
-}
-
-
 /*
  * Split a symbol into module / function parts.  If the function is in the
  * main binary (or an external library) *modname will be NULL.
@@ -661,140 +577,6 @@ llvm_split_symbol_name(const char *name, char **modname, char **funcname)
 	}
 }
 
-
-/*
- * Attempt to resolve symbol, so LLVM can emit a reference to it.
- */
-static uint64_t
-llvm_resolve_symbol(const char *symname, void *ctx)
-{
-	uintptr_t	addr;
-	char	   *funcname;
-	char	   *modname;
-
-	/*
-	 * macOS prefixes all object level symbols with an underscore. But neither
-	 * dlsym() nor PG's inliner expect that. So undo.
-	 */
-#if defined(__darwin__)
-	if (symname[0] != '_')
-		elog(ERROR, "expected prefixed symbol name, but got \"%s\"", symname);
-	symname++;
-#endif
-
-	llvm_split_symbol_name(symname, &modname, &funcname);
-
-	/* functions that aren't resolved to names shouldn't ever get here */
-	Assert(funcname);
-
-	if (modname)
-		addr = (uintptr_t) load_external_function(modname, funcname,
-												  true, NULL);
-	else
-		addr = (uintptr_t) LLVMSearchForAddressOfSymbol(symname);
-
-	pfree(funcname);
-	if (modname)
-		pfree(modname);
-
-	/* let LLVM will error out - should never happen */
-	if (!addr)
-		elog(WARNING, "failed to resolve name %s", symname);
-
-	return (uint64_t) addr;
-}
-
-
-static LLVMErrorRef
-llvm_resolve_symbols(LLVMOrcDefinitionGeneratorRef GeneratorObj, void *Ctx,
-					 LLVMOrcLookupStateRef *LookupState, LLVMOrcLookupKind Kind,
-					 LLVMOrcJITDylibRef JD, LLVMOrcJITDylibLookupFlags JDLookupFlags,
-					 LLVMOrcCLookupSet LookupSet, size_t LookupSetSize)
-{
-#if LLVM_VERSION_MAJOR > 14
-	LLVMOrcCSymbolMapPairs symbols = palloc0(sizeof(LLVMOrcCSymbolMapPair) * LookupSetSize);
-#else
-	LLVMOrcCSymbolMapPairs symbols = palloc0(sizeof(LLVMJITCSymbolMapPair) * LookupSetSize);
-#endif
-	LLVMErrorRef error;
-	LLVMOrcMaterializationUnitRef mu;
-
-	for (int i = 0; i < LookupSetSize; i++)
-	{
-		const char *name = LLVMOrcSymbolStringPoolEntryStr(LookupSet[i].Name);
-
-		LLVMOrcRetainSymbolStringPoolEntry(LookupSet[i].Name);
-		symbols[i].Name = LookupSet[i].Name;
-		symbols[i].Sym.Address = llvm_resolve_symbol(name, NULL);
-		symbols[i].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
-	}
-
-	mu = LLVMOrcAbsoluteSymbols(symbols, LookupSetSize);
-	error = LLVMOrcJITDylibDefine(JD, mu);
-	if (error != LLVMErrorSuccess)
-		LLVMOrcDisposeMaterializationUnit(mu);
-
-	pfree(symbols);
-
-	return error;
-}
-
-
-/*
- * Create LLJIT instance, using the passed in target machine. Note that the
- * target machine afterwards is owned by the LLJIT instance.
- */
-static LLVMOrcLLJITRef
-llvm_create_jit_instance(LLVMTargetMachineRef tm)
-{
-	LLVMOrcLLJITRef lljit;
-	LLVMOrcJITTargetMachineBuilderRef tm_builder;
-	LLVMOrcLLJITBuilderRef lljit_builder;
-	LLVMErrorRef error;
-	LLVMOrcDefinitionGeneratorRef main_gen;
-	LLVMOrcDefinitionGeneratorRef ref_gen;
-
-	lljit_builder = LLVMOrcCreateLLJITBuilder();
-	tm_builder = LLVMOrcJITTargetMachineBuilderCreateFromTargetMachine(tm);
-	LLVMOrcLLJITBuilderSetJITTargetMachineBuilder(lljit_builder, tm_builder);
-
-	LLVMOrcLLJITBuilderSetObjectLinkingLayerCreator(lljit_builder,
-													llvm_create_object_layer,
-													NULL);
-
-	error = LLVMOrcCreateLLJIT(&lljit, lljit_builder);
-	if (error)
-		elog(ERROR, "failed to create lljit instance: %s",
-			 llvm_error_message(error));
-
-	LLVMOrcExecutionSessionSetErrorReporter(LLVMOrcLLJITGetExecutionSession(lljit),
-											llvm_log_jit_error, NULL);
-
-	/*
-	 * Symbol resolution support for symbols in the postgres binary /
-	 * libraries already loaded.
-	 */
-	error = LLVMOrcCreateDynamicLibrarySearchGeneratorForProcess(&main_gen,
-																 LLVMOrcLLJITGetGlobalPrefix(lljit),
-																 0, NULL);
-	if (error)
-		elog(ERROR, "failed to create generator: %s",
-			 llvm_error_message(error));
-	LLVMOrcJITDylibAddGenerator(LLVMOrcLLJITGetMainJITDylib(lljit), main_gen);
-
-	/*
-	 * Symbol resolution support for "special" functions, e.g. a call into an
-	 * SQL callable function.
-	 */
-#if LLVM_VERSION_MAJOR > 14
-	ref_gen = LLVMOrcCreateCustomCAPIDefinitionGenerator(llvm_resolve_symbols, NULL, NULL);
-#else
-	ref_gen = LLVMOrcCreateCustomCAPIDefinitionGenerator(llvm_resolve_symbols, NULL);
-#endif
-	LLVMOrcJITDylibAddGenerator(LLVMOrcLLJITGetMainJITDylib(lljit), ref_gen);
-
-	return lljit;
-}
 
 /*
  * Return module which may be modified, e.g. by creating new functions.
@@ -954,6 +736,95 @@ llvm_function_reference(LLVMJitContext *context,
 	v_fn = LLVMAddFunction(mod, funcname, LLVMGetFunctionType(AttributeTemplate));
 
 	return v_fn;
+}
+
+void llvm_compile_module(LLVMJitContext* context)
+{
+	LLVMJitHandle *handle;
+	MemoryContext oldcontext;
+	instr_time	starttime;
+	instr_time	endtime;
+
+
+	elog(DEBUG1, "%s", "Before inlining");
+	/* perform inlining */
+	if (context->base.flags & PGJIT_INLINE)
+	{
+		INSTR_TIME_SET_CURRENT(starttime);
+		llvm_inline(context->module);
+		INSTR_TIME_SET_CURRENT(endtime);
+		INSTR_TIME_ACCUM_DIFF(context->base.instr.inlining_counter,
+							  endtime, starttime);
+	}
+	elog(DEBUG1, "%s", "After inlining");
+
+
+	if (jit_dump_bitcode)
+	{
+		char	   *filename;
+
+		filename = psprintf("%d.%zu.bc",
+							MyProcPid,
+							context->module_generation);
+		LLVMWriteBitcodeToFile(context->module, filename);
+		pfree(filename);
+	}
+
+
+	/* optimize according to the chosen optimization settings */
+	// INSTR_TIME_SET_CURRENT(starttime);
+	// llvm_optimize_module(context, context->module);
+	// INSTR_TIME_SET_CURRENT(endtime);
+	// INSTR_TIME_ACCUM_DIFF(context->base.instr.optimization_counter,
+	// 					  endtime, starttime);
+
+	// if (jit_dump_bitcode)
+	// {
+	// 	char	   *filename;
+
+	// 	filename = psprintf("%d.%zu.optimized.bc",
+	// 						MyProcPid,
+	// 						context->module_generation);
+	// 	LLVMWriteBitcodeToFile(context->module, filename);
+	// 	pfree(filename);
+	// }
+
+	handle = (LLVMJitHandle *)
+		MemoryContextAlloc(TopMemoryContext, sizeof(LLVMJitHandle));
+
+	/*
+	 * Emit the code. Note that this can, depending on the optimization
+	 * settings, take noticeable resources as code emission executes low-level
+	 * instruction combining/selection passes etc. Without optimization a
+	 * faster instruction selection mechanism is used.
+	 */
+	INSTR_TIME_SET_CURRENT(starttime);
+	{
+		elog(DEBUG1, "%s", "Before tpde_add_llvm_ir_module");
+		tpde_add_llvm_ir_module(context);
+		elog(DEBUG1, "%s", "After tpde_add_llvm_ir_module");
+	}
+
+	INSTR_TIME_SET_CURRENT(endtime);
+	INSTR_TIME_ACCUM_DIFF(context->base.instr.emission_counter,
+						  endtime, starttime);
+
+	context->module = NULL;
+	context->compiled = true;
+
+
+	/* remember emitted code for cleanup and lookups */
+	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
+	context->handles = lappend(context->handles, handle);
+	MemoryContextSwitchTo(oldcontext);
+
+	ereport(DEBUG1,
+			(errmsg_internal("time to inline: %.3fs, opt: %.3fs, emit: %.3fs",
+							 INSTR_TIME_GET_DOUBLE(context->base.instr.inlining_counter),
+							 INSTR_TIME_GET_DOUBLE(context->base.instr.optimization_counter),
+							 INSTR_TIME_GET_DOUBLE(context->base.instr.emission_counter)),
+			 errhidestmt(true),
+			 errhidecontext(true)));
 }
 
 
