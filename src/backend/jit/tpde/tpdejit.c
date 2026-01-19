@@ -189,7 +189,7 @@ llvm_session_initialize(void)
 	char	   *error = NULL;
 	char	   *cpu = NULL;
 	char	   *features = NULL;
-	// LLVMTargetMachineRef opt0_tm;
+	LLVMTargetMachineRef opt0_tm;
 	// LLVMTargetMachineRef opt3_tm;
 
 	if (llvm_session_initialized)
@@ -236,11 +236,11 @@ llvm_session_initialize(void)
 	elog(DEBUG2, "LLVMJIT detected CPU \"%s\", with features \"%s\"",
 		 cpu, features);
 
-	// opt0_tm =
-	// 	LLVMCreateTargetMachine(llvm_targetref, llvm_triple, cpu, features,
-	// 							LLVMCodeGenLevelNone,
-	// 							LLVMRelocDefault,
-	// 							LLVMCodeModelJITDefault);
+	opt0_tm =
+		LLVMCreateTargetMachine(llvm_targetref, llvm_triple, cpu, features,
+								LLVMCodeGenLevelNone,
+								LLVMRelocDefault,
+								LLVMCodeModelJITDefault);
 	// opt3_tm =
 	// 	LLVMCreateTargetMachine(llvm_targetref, llvm_triple, cpu, features,
 	// 							LLVMCodeGenLevelAggressive,
@@ -740,8 +740,8 @@ llvm_function_reference(LLVMJitContext *context,
 
 void llvm_compile_module(LLVMJitContext* context)
 {
-	LLVMJitHandle *handle;
-	MemoryContext oldcontext;
+	// LLVMJitHandle *handle;
+	// MemoryContext oldcontext;
 	instr_time	starttime;
 	instr_time	endtime;
 
@@ -789,8 +789,8 @@ void llvm_compile_module(LLVMJitContext* context)
 	// 	pfree(filename);
 	// }
 
-	handle = (LLVMJitHandle *)
-		MemoryContextAlloc(TopMemoryContext, sizeof(LLVMJitHandle));
+	// handle = (LLVMJitHandle *)
+	// 	MemoryContextAlloc(TopMemoryContext, sizeof(LLVMJitHandle));
 
 	/*
 	 * Emit the code. Note that this can, depending on the optimization
@@ -814,9 +814,9 @@ void llvm_compile_module(LLVMJitContext* context)
 
 
 	/* remember emitted code for cleanup and lookups */
-	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
-	context->handles = lappend(context->handles, handle);
-	MemoryContextSwitchTo(oldcontext);
+	// oldcontext = MemoryContextSwitchTo(TopMemoryContext);
+	// context->handles = lappend(context->handles, handle);
+	// MemoryContextSwitchTo(oldcontext);
 
 	ereport(DEBUG1,
 			(errmsg_internal("time to inline: %.3fs, opt: %.3fs, emit: %.3fs",

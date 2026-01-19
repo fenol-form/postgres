@@ -71,7 +71,8 @@ install/lib/libspdlogd.a: tpde-lib
 OBJS += \
 	llvmjit_error.o \
 	llvmjit_inline.o \
-	llvmjit_wrap.o
+	llvmjit_wrap.o \
+	llvmjit_deform.o
 
 tpde-lib: tpde-cmake
 	$(MAKE) tpde tpde_llvm && $(MAKE) install

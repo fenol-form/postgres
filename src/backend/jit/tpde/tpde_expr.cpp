@@ -117,7 +117,7 @@ public:
 };
 
 
-void tpde_create_compiler(const char * llvm_triple /*, TargetMachine should be NULL for TPDE*/) {
+void tpde_create_compiler(const char * llvm_triple /*TargetMachine should be NULL for TPDE*/) {
 	using namespace llvm;
 	using namespace tpde_llvm;
 	ExitOnError ExitOnErr;
@@ -131,12 +131,13 @@ void tpde_create_compiler(const char * llvm_triple /*, TargetMachine should be N
 	// jtmb.setCodeModel(llvm::CodeModel::Small); ?
 	builder.setJITTargetMachineBuilder(std::move(jtmb));
 
-	builder.CreateCompileFunction = [](orc::JITTargetMachineBuilder jtmb) 
-		-> Expected<std::unique_ptr<orc::IRCompileLayer::IRCompiler>>
-	{
-		return std::make_unique<OrcCompiler>(jtmb.getTargetTriple());
-		/* OrcCompiler requires target machine to be NULL, so dont bother with it's creation*/
-	};
+	// Replace llvm compiler with tpde
+	// builder.CreateCompileFunction = [](orc::JITTargetMachineBuilder jtmb) 
+	// 	-> Expected<std::unique_ptr<orc::IRCompileLayer::IRCompiler>>
+	// {
+	// 	return std::make_unique<OrcCompiler>(jtmb.getTargetTriple());
+	// 	/* OrcCompiler requires target machine to be NULL, so dont bother with it's creation*/
+	// };
 
 	// see what builder takes at llvmjit.c:1220 :
 	// see llvmjit.c:1172 there is event listeners definition for JIT debugging
@@ -295,8 +296,9 @@ static ExprStateEvalFunc tpde_codegen(TPDECompiledExprState* cstate)
 	INSTR_TIME_ACCUM_DIFF(cstate->context->base.instr.emission_counter,
 							endtime, starttime);
 
+	
 	if (execAddr)
-		return (ExprStateEvalFunc) (uintptr_t) execAddr->getValue();
+		return execAddr->toPtr<ExprStateEvalFunc>();
 
 	elog(ERROR, "failed to JIT: %s", cstate->funcname);
 
