@@ -739,22 +739,22 @@ llvm_compile_module(LLVMJitContext *context)
 
 
 	/* optimize according to the chosen optimization settings */
-	// INSTR_TIME_SET_CURRENT(starttime);
-	// llvm_optimize_module(context, context->module);
-	// INSTR_TIME_SET_CURRENT(endtime);
-	// INSTR_TIME_ACCUM_DIFF(context->base.instr.optimization_counter,
-	// 					  endtime, starttime);
+	INSTR_TIME_SET_CURRENT(starttime);
+	llvm_optimize_module(context, context->module);
+	INSTR_TIME_SET_CURRENT(endtime);
+	INSTR_TIME_ACCUM_DIFF(context->base.instr.optimization_counter,
+						  endtime, starttime);
 
-	// if (jit_dump_bitcode)
-	// {
-	// 	char	   *filename;
+	if (jit_dump_bitcode)
+	{
+		char	   *filename;
 
-	// 	filename = psprintf("%d.%zu.optimized.bc",
-	// 						MyProcPid,
-	// 						context->module_generation);
-	// 	LLVMWriteBitcodeToFile(context->module, filename);
-	// 	pfree(filename);
-	// }
+		filename = psprintf("%d.%zu.optimized.bc",
+							MyProcPid,
+							context->module_generation);
+		LLVMWriteBitcodeToFile(context->module, filename);
+		pfree(filename);
+	}
 
 	handle = (LLVMJitHandle *)
 		MemoryContextAlloc(TopMemoryContext, sizeof(LLVMJitHandle));

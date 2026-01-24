@@ -63,14 +63,11 @@ extern bool tpde_compile_expr(ExprState *state);
 */
 void create_target_machine(const char* triple, const char* cpu, const char* features) {
 	jtmb = llvm::orc::JITTargetMachineBuilder(llvm::Triple(triple));
-	// jtmb
-		// .setCPU(cpu)
-		// .setFeatures(features)
-		// .setCodeGenOptLevel(llvm::CodeGenOptLevel::Default) // ???
-		// .setCodeModel(llvm::CodeModel::Medium); // ???
-		;
-
-	// jtmb.setRelocationModel(llvm::Reloc::Model::PIC_); ?
+	jtmb
+		->setCPU(cpu)
+		.setFeatures(features)
+		.setCodeGenOptLevel(llvm::CodeGenOptLevel::Default) // ???
+		.setCodeModel(llvm::CodeModel::Medium); // ???
 }
 
 /*
@@ -280,12 +277,9 @@ void tpde_add_llvm_ir_module(LLVMJitContext* context)
 {
 	auto module = std::unique_ptr<llvm::Module>(llvm::unwrap(context->module));
 
-	module->dump();
-
-	elog(DEBUG1, "Module data layout: %s", module->getDataLayoutStr().data());
-	
 	// takes ownership of module
 	auto ts = llvm::orc::ThreadSafeModule(std::move(module), llvm_ts_context);
+
 	elog(DEBUG1, "%s", "Adding IR module to LLJIT");
 	context->module = NULL;
 	if (auto error = lljit->addIRModule(std::move(ts))) {
