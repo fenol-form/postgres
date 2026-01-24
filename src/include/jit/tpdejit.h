@@ -27,6 +27,10 @@ typedef struct TPDECompiledExprState
 	const char *funcname;
 } TPDECompiledExprState;
 
+void ResourceOwnerRememberJIT(ResourceOwner owner, LLVMJitContext *handle);
+void ResourceOwnerForgetJIT(ResourceOwner owner, LLVMJitContext *handle);
+
+
 void tpde_create_compiler(const char * llvm_triple);
 
 extern bool llvm_build_ir(struct ExprState *state, struct LLVMJitContext* context);
@@ -35,6 +39,7 @@ extern LLVMJitContext *llvm_create_context(int jitFlags);
 void llvm_release_context(JitContext* context);
 void llvm_compile_module(LLVMJitContext *context);
 void tpde_add_llvm_ir_module(LLVMJitContext* context);
+void create_target_machine(const char* triple, const char* cpu, const char* features);
 
 
 #ifdef __cplusplus

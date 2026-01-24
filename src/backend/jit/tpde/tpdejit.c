@@ -3,6 +3,7 @@
 #include "postgres.h"
 #include "jit/tpdejit.h"
 
+#include <llvm-c-19/llvm-c/TargetMachine.h>
 #include <llvm-c/Analysis.h>
 #include <llvm-c/BitReader.h>
 #include <llvm-c/BitWriter.h>
@@ -106,12 +107,12 @@ static const ResourceOwnerDesc jit_resowner_desc =
 };
 
 /* Convenience wrappers over ResourceOwnerRemember/Forget */
-static inline void
+void
 ResourceOwnerRememberJIT(ResourceOwner owner, LLVMJitContext *handle)
 {
 	ResourceOwnerRemember(owner, PointerGetDatum(handle), &jit_resowner_desc);
 }
-static inline void
+void
 ResourceOwnerForgetJIT(ResourceOwner owner, LLVMJitContext *handle)
 {
 	ResourceOwnerForget(owner, PointerGetDatum(handle), &jit_resowner_desc);
@@ -174,9 +175,6 @@ llvm_release_context(JitContext *context)
 	llvm_jit_context->handles = NIL;
 
 	llvm_leave_fatal_on_oom();
-
-	if (llvm_jit_context->resowner)
-		ResourceOwnerForgetJIT(llvm_jit_context->resowner, llvm_jit_context);
 }
 
 /*
@@ -236,16 +234,18 @@ llvm_session_initialize(void)
 	elog(DEBUG2, "LLVMJIT detected CPU \"%s\", with features \"%s\"",
 		 cpu, features);
 
-	opt0_tm =
-		LLVMCreateTargetMachine(llvm_targetref, llvm_triple, cpu, features,
-								LLVMCodeGenLevelNone,
-								LLVMRelocDefault,
-								LLVMCodeModelJITDefault);
+	// opt0_tm =
+	// 	LLVMCreateTargetMachine(llvm_targetref, llvm_triple, cpu, features,
+	// 							LLVMCodeGenLevelNone,
+	// 							LLVMRelocDefault,
+	// 							LLVMCodeModelJITDefault);
 	// opt3_tm =
 	// 	LLVMCreateTargetMachine(llvm_targetref, llvm_triple, cpu, features,
 	// 							LLVMCodeGenLevelAggressive,
 	// 							LLVMRelocDefault,
 	// 							LLVMCodeModelJITDefault);
+
+	create_target_machine(llvm_triple, cpu, features);
 
 	LLVMDisposeMessage(cpu);
 	cpu = NULL;

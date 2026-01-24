@@ -22,6 +22,7 @@
 #include <llvm-19/llvm/Support/CodeGen.h>
 #include <llvm-19/llvm/Support/DynamicLibrary.h>
 #include <llvm-19/llvm/Support/Error.h>
+#include <llvm-19/llvm/Support/raw_ostream.h>
 #include <llvm-19/llvm/Target/TargetMachine.h>
 #include <llvm-19/llvm/TargetParser/Triple.h>
 #include <llvm-c-19/llvm-c/LLJIT.h>
@@ -30,6 +31,7 @@
 #include <llvm-c-19/llvm-c/Types.h>
 #include <memory>
 #include <string_view>
+#include <sstream>
 #include "tpde/tpde-llvm/include/tpde-llvm/OrcCompiler.hpp"
 extern "C"
 {
@@ -48,12 +50,28 @@ static bool lljit_initialized = false;
 static std::unique_ptr<llvm::orc::LLJIT> lljit;
 static llvm::orc::ResourceTrackerSP resource_tracker;
 static llvm::orc::ThreadSafeContext llvm_ts_context;
+static std::optional<llvm::orc::JITTargetMachineBuilder> jtmb;
 
 
 static void tpde_release_context(JitContext *context);
 static void tpde_reset_after_error(void);
 static ExprStateEvalFunc tpde_codegen(TPDECompiledExprState* cstate);
 extern bool tpde_compile_expr(ExprState *state);
+
+/*
+ * create and save target machine builder
+*/
+void create_target_machine(const char* triple, const char* cpu, const char* features) {
+	jtmb = llvm::orc::JITTargetMachineBuilder(llvm::Triple(triple));
+	// jtmb
+		// .setCPU(cpu)
+		// .setFeatures(features)
+		// .setCodeGenOptLevel(llvm::CodeGenOptLevel::Default) // ???
+		// .setCodeModel(llvm::CodeModel::Medium); // ???
+		;
+
+	// jtmb.setRelocationModel(llvm::Reloc::Model::PIC_); ?
+}
 
 /*
  * Attempt to resolve symbol, so LLVM can emit a reference to it.
@@ -83,7 +101,6 @@ static llvm::orc::ExecutorAddr llvm_resolve_symbol(std::string_view symname, voi
 												  true, NULL);
 	else
 		addr = (uintptr_t) llvm::sys::DynamicLibrary::SearchForAddressOfSymbol(symname.data());
-		// addr = (uintptr_t) LLVMSearchForAddressOfSymbol(symname);
 
 	pfree(funcname);
 	if (modname)
@@ -107,7 +124,6 @@ public:
 
 		for (auto sym_it = LookupSet.begin(); sym_it != LookupSet.end(); ++sym_it) {
 			std::string_view name = *sym_it->first;
-			// LLVMOrcRetainSymbolStringPoolEntry(LookupSet[i].Name);
 			auto addr = llvm_resolve_symbol(name, NULL);
 			symbols[sym_it->first] = llvm::orc::ExecutorSymbolDef(addr, llvm::JITSymbolFlags::Exported);
 		}
@@ -125,19 +141,16 @@ void tpde_create_compiler(const char * llvm_triple /*TargetMachine should be NUL
 	assert(!lljit_initialized);
 
 	auto llvm_triple_unwrapped = llvm::Triple(llvm_triple);
-	auto jtmb = llvm::orc::JITTargetMachineBuilder(llvm_triple_unwrapped);
-	// jtmb.setRelocationModel(llvm::Reloc::Model::PIC_); ?
-	// jtmb.setCodeGenOptLevel(CodeGenOptLevel OptLevel) ?
-	// jtmb.setCodeModel(llvm::CodeModel::Small); ?
-	builder.setJITTargetMachineBuilder(std::move(jtmb));
+	Assert(static_cast<bool>(jtmb));
+	builder.setJITTargetMachineBuilder(*jtmb);
 
 	// Replace llvm compiler with tpde
-	// builder.CreateCompileFunction = [](orc::JITTargetMachineBuilder jtmb) 
-	// 	-> Expected<std::unique_ptr<orc::IRCompileLayer::IRCompiler>>
-	// {
-	// 	return std::make_unique<OrcCompiler>(jtmb.getTargetTriple());
-	// 	/* OrcCompiler requires target machine to be NULL, so dont bother with it's creation*/
-	// };
+	builder.CreateCompileFunction = [](orc::JITTargetMachineBuilder jtmb) 
+		-> Expected<std::unique_ptr<orc::IRCompileLayer::IRCompiler>>
+	{
+		return std::make_unique<OrcCompiler>(jtmb.getTargetTriple());
+		/* OrcCompiler requires target machine to be NULL, so dont bother with it's creation*/
+	};
 
 	// see what builder takes at llvmjit.c:1220 :
 	// see llvmjit.c:1172 there is event listeners definition for JIT debugging
@@ -203,19 +216,34 @@ static LLVMJitContext* retrieve_or_init_jit_context(ExprState* state)
 	return context;
 }
 
-// static 
 
 static void tpde_release_context(JitContext *context)
 {
-	llvm_release_context(context);
-	// ... ?
+	llvm_release_context(context); // TODO: remove this ?
+
+	LLVMJitContext *llvm_jit_context = (LLVMJitContext *) context;
+
+	llvm_enter_fatal_on_oom();
+	llvm::ExitOnError ExitOnErr;
+
+	ExitOnErr(resource_tracker->remove());
+	// resource_tracker->Release(); ?? в llvmjit так сделано зачем то
+	auto& es = lljit->getExecutionSession();
+	es.getSymbolStringPool()->clearDeadEntries();
+
+	llvm_leave_fatal_on_oom();
+	
+	if (llvm_jit_context->resowner)
+		ResourceOwnerForgetJIT(llvm_jit_context->resowner, llvm_jit_context);
 }
+
 
 static void tpde_reset_after_error(void)
 {
 	llvm_reset_after_error();
 	// ... ?
 }
+
 
 bool tpde_compile_expr(ExprState *state) 
 {
@@ -251,13 +279,16 @@ bool tpde_compile_expr(ExprState *state)
 void tpde_add_llvm_ir_module(LLVMJitContext* context)
 {
 	auto module = std::unique_ptr<llvm::Module>(llvm::unwrap(context->module));
+
+	module->dump();
+
+	elog(DEBUG1, "Module data layout: %s", module->getDataLayoutStr().data());
 	
 	// takes ownership of module
 	auto ts = llvm::orc::ThreadSafeModule(std::move(module), llvm_ts_context);
 	elog(DEBUG1, "%s", "Adding IR module to LLJIT");
-	context->module = NULL; /* will be owned by LLJIT */
+	context->module = NULL;
 	if (auto error = lljit->addIRModule(std::move(ts))) {
-		elog(DEBUG1, "%s", "Tried to emit code");
 		elog(ERROR, "failed to JIT module: %s", llvm::toString(std::move(error)).data());	
 	}
 	elog(DEBUG1, "%s", "Successfully added IR module to LLJIT");

@@ -28,8 +28,8 @@ cp src/backend/jit/tpde/tpdejit.so src/backend/jit/tpde/llvmjit_types.bc lib/
 ./bin/pg_ctl stop -D data
 ./bin/pg_ctl -D data -l logfile start
 
-# ./bin/psql -d template1 -f /postgres/pagila/pagila-schema.sql
-# ./bin/psql -d template1 -f /postgres/pagila/pagila-data.sql
+# ./bin/psql -d template1 -f /postgres/pagila/pagila-debug.sql
+# ./bin/psql -d template1 -f /postgres/debug-queries-sql/debug.sql
 
 echo "jit_provider = 'tpdejit'" >> data/postgresql.conf
 echo "jit_above_cost = 0" >> data/postgresql.conf
