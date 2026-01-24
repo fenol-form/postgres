@@ -192,68 +192,6 @@ llvm_build_ir(ExprState *state, struct LLVMJitContext* context)
 									 FIELDNO_EXPRSTATE_RESULTSLOT,
 									 "v_resultslot");
 
-	/* build global values/isnull pointers */
-	v_scanvalues = l_load_struct_gep(b,
-									 StructTupleTableSlot,
-									 v_scanslot,
-									 FIELDNO_TUPLETABLESLOT_VALUES,
-									 "v_scanvalues");
-	v_scannulls = l_load_struct_gep(b,
-									StructTupleTableSlot,
-									v_scanslot,
-									FIELDNO_TUPLETABLESLOT_ISNULL,
-									"v_scannulls");
-	v_innervalues = l_load_struct_gep(b,
-									  StructTupleTableSlot,
-									  v_innerslot,
-									  FIELDNO_TUPLETABLESLOT_VALUES,
-									  "v_innervalues");
-	v_innernulls = l_load_struct_gep(b,
-									 StructTupleTableSlot,
-									 v_innerslot,
-									 FIELDNO_TUPLETABLESLOT_ISNULL,
-									 "v_innernulls");
-	v_outervalues = l_load_struct_gep(b,
-									  StructTupleTableSlot,
-									  v_outerslot,
-									  FIELDNO_TUPLETABLESLOT_VALUES,
-									  "v_outervalues");
-	v_outernulls = l_load_struct_gep(b,
-									 StructTupleTableSlot,
-									 v_outerslot,
-									 FIELDNO_TUPLETABLESLOT_ISNULL,
-									 "v_outernulls");
-	v_oldvalues = l_load_struct_gep(b,
-									StructTupleTableSlot,
-									v_oldslot,
-									FIELDNO_TUPLETABLESLOT_VALUES,
-									"v_oldvalues");
-	v_oldnulls = l_load_struct_gep(b,
-								   StructTupleTableSlot,
-								   v_oldslot,
-								   FIELDNO_TUPLETABLESLOT_ISNULL,
-								   "v_oldnulls");
-	v_newvalues = l_load_struct_gep(b,
-									StructTupleTableSlot,
-									v_newslot,
-									FIELDNO_TUPLETABLESLOT_VALUES,
-									"v_newvalues");
-	v_newnulls = l_load_struct_gep(b,
-								   StructTupleTableSlot,
-								   v_newslot,
-								   FIELDNO_TUPLETABLESLOT_ISNULL,
-								   "v_newnulls");
-	v_resultvalues = l_load_struct_gep(b,
-									   StructTupleTableSlot,
-									   v_resultslot,
-									   FIELDNO_TUPLETABLESLOT_VALUES,
-									   "v_resultvalues");
-	v_resultnulls = l_load_struct_gep(b,
-									  StructTupleTableSlot,
-									  v_resultslot,
-									  FIELDNO_TUPLETABLESLOT_ISNULL,
-									  "v_resultnulls");
-
 	/* aggvalues/aggnulls */
 	v_aggvalues = l_load_struct_gep(b,
 									StructExprContext,
@@ -423,26 +361,76 @@ llvm_build_ir(ExprState *state, struct LLVMJitContext* context)
 
 					if (opcode == EEOP_INNER_VAR)
 					{
+						v_innervalues = l_load_struct_gep(b,
+									  StructTupleTableSlot,
+									  v_innerslot,
+									  FIELDNO_TUPLETABLESLOT_VALUES,
+									  "v_innervalues");
+						v_innernulls = l_load_struct_gep(b,
+									 StructTupleTableSlot,
+									 v_innerslot,
+									 FIELDNO_TUPLETABLESLOT_ISNULL,
+									 "v_innernulls");
 						v_values = v_innervalues;
 						v_nulls = v_innernulls;
 					}
 					else if (opcode == EEOP_OUTER_VAR)
 					{
+						v_outervalues = l_load_struct_gep(b,
+									  StructTupleTableSlot,
+									  v_outerslot,
+									  FIELDNO_TUPLETABLESLOT_VALUES,
+									  "v_outervalues");
+						v_outernulls = l_load_struct_gep(b,
+									 StructTupleTableSlot,
+									 v_outerslot,
+									 FIELDNO_TUPLETABLESLOT_ISNULL,
+									 "v_outernulls");
 						v_values = v_outervalues;
 						v_nulls = v_outernulls;
 					}
 					else if (opcode == EEOP_SCAN_VAR)
 					{
+						v_scanvalues = l_load_struct_gep(b,
+									 StructTupleTableSlot,
+									 v_scanslot,
+									 FIELDNO_TUPLETABLESLOT_VALUES,
+									 "v_scanvalues");
+						v_scannulls = l_load_struct_gep(b,
+									StructTupleTableSlot,
+									v_scanslot,
+									FIELDNO_TUPLETABLESLOT_ISNULL,
+									"v_scannulls");
 						v_values = v_scanvalues;
 						v_nulls = v_scannulls;
 					}
 					else if (opcode == EEOP_OLD_VAR)
 					{
+						v_oldvalues = l_load_struct_gep(b,
+									StructTupleTableSlot,
+									v_oldslot,
+									FIELDNO_TUPLETABLESLOT_VALUES,
+									"v_oldvalues");
+						v_oldnulls = l_load_struct_gep(b,
+								   StructTupleTableSlot,
+								   v_oldslot,
+								   FIELDNO_TUPLETABLESLOT_ISNULL,
+								   "v_oldnulls");
 						v_values = v_oldvalues;
 						v_nulls = v_oldnulls;
 					}
 					else
 					{
+						v_newvalues = l_load_struct_gep(b,
+									StructTupleTableSlot,
+									v_newslot,
+									FIELDNO_TUPLETABLESLOT_VALUES,
+									"v_newvalues");
+						v_newnulls = l_load_struct_gep(b,
+								   StructTupleTableSlot,
+								   v_newslot,
+								   FIELDNO_TUPLETABLESLOT_ISNULL,
+								   "v_newnulls");
 						v_values = v_newvalues;
 						v_nulls = v_newnulls;
 					}
@@ -506,26 +494,76 @@ llvm_build_ir(ExprState *state, struct LLVMJitContext* context)
 
 					if (opcode == EEOP_ASSIGN_INNER_VAR)
 					{
+						v_innervalues = l_load_struct_gep(b,
+									  StructTupleTableSlot,
+									  v_innerslot,
+									  FIELDNO_TUPLETABLESLOT_VALUES,
+									  "v_innervalues");
+						v_innernulls = l_load_struct_gep(b,
+									 StructTupleTableSlot,
+									 v_innerslot,
+									 FIELDNO_TUPLETABLESLOT_ISNULL,
+									 "v_innernulls");
 						v_values = v_innervalues;
 						v_nulls = v_innernulls;
 					}
 					else if (opcode == EEOP_ASSIGN_OUTER_VAR)
 					{
+						v_outervalues = l_load_struct_gep(b,
+									  StructTupleTableSlot,
+									  v_outerslot,
+									  FIELDNO_TUPLETABLESLOT_VALUES,
+									  "v_outervalues");
+						v_outernulls = l_load_struct_gep(b,
+									 StructTupleTableSlot,
+									 v_outerslot,
+									 FIELDNO_TUPLETABLESLOT_ISNULL,
+									 "v_outernulls");
 						v_values = v_outervalues;
 						v_nulls = v_outernulls;
 					}
 					else if (opcode == EEOP_ASSIGN_SCAN_VAR)
 					{
+						v_scanvalues = l_load_struct_gep(b,
+									 StructTupleTableSlot,
+									 v_scanslot,
+									 FIELDNO_TUPLETABLESLOT_VALUES,
+									 "v_scanvalues");
+						v_scannulls = l_load_struct_gep(b,
+									StructTupleTableSlot,
+									v_scanslot,
+									FIELDNO_TUPLETABLESLOT_ISNULL,
+									"v_scannulls");
 						v_values = v_scanvalues;
 						v_nulls = v_scannulls;
 					}
 					else if (opcode == EEOP_ASSIGN_OLD_VAR)
 					{
+						v_oldvalues = l_load_struct_gep(b,
+									StructTupleTableSlot,
+									v_oldslot,
+									FIELDNO_TUPLETABLESLOT_VALUES,
+									"v_oldvalues");
+						v_oldnulls = l_load_struct_gep(b,
+								   StructTupleTableSlot,
+								   v_oldslot,
+								   FIELDNO_TUPLETABLESLOT_ISNULL,
+								   "v_oldnulls");
 						v_values = v_oldvalues;
 						v_nulls = v_oldnulls;
 					}
 					else
 					{
+						v_newvalues = l_load_struct_gep(b,
+									StructTupleTableSlot,
+									v_newslot,
+									FIELDNO_TUPLETABLESLOT_VALUES,
+									"v_newvalues");
+						v_newnulls = l_load_struct_gep(b,
+								   StructTupleTableSlot,
+								   v_newslot,
+								   FIELDNO_TUPLETABLESLOT_ISNULL,
+								   "v_newnulls");
 						v_values = v_newvalues;
 						v_nulls = v_newnulls;
 					}
@@ -537,6 +575,16 @@ llvm_build_ir(ExprState *state, struct LLVMJitContext* context)
 
 					/* compute addresses of targets */
 					v_resultnum = l_int32_const(lc, op->d.assign_var.resultnum);
+					v_resultvalues = l_load_struct_gep(b,
+									   StructTupleTableSlot,
+									   v_resultslot,
+									   FIELDNO_TUPLETABLESLOT_VALUES,
+									   "v_resultvalues");
+					v_resultnulls = l_load_struct_gep(b,
+									  StructTupleTableSlot,
+									  v_resultslot,
+									  FIELDNO_TUPLETABLESLOT_ISNULL,
+									  "v_resultnulls");
 					v_rvaluep = l_gep(b,
 									  TypeDatum,
 									  v_resultvalues,
@@ -570,6 +618,16 @@ llvm_build_ir(ExprState *state, struct LLVMJitContext* context)
 
 					/* compute addresses of targets */
 					v_resultnum = l_int32_const(lc, resultnum);
+					v_resultvalues = l_load_struct_gep(b,
+									   StructTupleTableSlot,
+									   v_resultslot,
+									   FIELDNO_TUPLETABLESLOT_VALUES,
+									   "v_resultvalues");
+					v_resultnulls = l_load_struct_gep(b,
+									  StructTupleTableSlot,
+									  v_resultslot,
+									  FIELDNO_TUPLETABLESLOT_ISNULL,
+									  "v_resultnulls");
 					v_rvaluep =
 						l_gep(b, TypeDatum, v_resultvalues, &v_resultnum, 1, "");
 					v_risnullp =
