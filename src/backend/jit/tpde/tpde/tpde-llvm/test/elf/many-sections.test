@@ -1,0 +1,19 @@
+# NOTE: Do not autogenerate
+# SPDX-FileCopyrightText: 2025 Contributors to TPDE <https://tpde.org>
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+
+# RUN: python3 %s 66000 | tpde-llc | llvm-readelf -Ss - | FileCheck %s
+
+# CHECK: Section Headers:
+# CHECK-DAG: [{{ *}}[[SEC65999:[0-9]+]]] sec65999 PROGBITS
+# CHECK-DAG: [{{ *[0-9]+}}] .symtab_shndx SYMTAB SECTION INDICES
+
+# CHECK: Symbol table '.symtab'
+# CHECK-DAG: 4 OBJECT  GLOBAL DEFAULT [[SEC65999]]      g65999
+
+
+import sys
+
+for i in range(int(sys.argv[1])):
+    print(f'@g{i} = global i32 1, section "sec{i}"')
