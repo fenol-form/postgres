@@ -8,6 +8,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_subdirectory(tpde)
 
-set(TPDE_LOGGING ON)
+set(TPDE_LOGGING DebugOnly)
 
 install(TARGETS tpde tpde_llvm spdlog RUNTIME DESTINATION install)

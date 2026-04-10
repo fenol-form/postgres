@@ -38,6 +38,7 @@ extern "C"
 #include "c.h"
 #include "postgres.h"
 
+#include "executor/execExpr.h"
 #include "fmgr.h"
 #include "jit/jit.h"
 #include "jit/llvmjit.h"
@@ -57,6 +58,7 @@ static void tpde_release_context(JitContext *context);
 static void tpde_reset_after_error(void);
 static ExprStateEvalFunc tpde_codegen(TPDECompiledExprState* cstate);
 extern bool tpde_compile_expr(ExprState *state);
+static Datum ExecRunCompiledTPDEExpr(ExprState *state, ExprContext *econtext, bool *isNull);
 
 /*
  * create and save target machine builder
@@ -253,23 +255,9 @@ bool tpde_compile_expr(ExprState *state)
 		elog(ERROR, "%s", "Could not build LLVM IR");
 		return false;
 	}
-	
-	TPDECompiledExprState *cstate = (TPDECompiledExprState*)(state->evalfunc_private);
-	Assert(cstate);
 
-	// compile and link to binary via tpde
-	llvm_enter_fatal_on_oom();
-
-	elog(DEBUG1, "%s", "Before codegen");
-	ExprStateEvalFunc func = tpde_codegen(cstate);
-	elog(DEBUG1, "JIT compilation finished, func ptr: %p", (void*)func);
-
-	llvm_leave_fatal_on_oom();
-
-	Assert(func);
-	/* remove indirection via this function for future calls */
-	state->evalfunc = func;
-
+	// do not compile immediately for an abiity to batch expression compilation
+	state->evalfunc = ExecRunCompiledTPDEExpr;
 	return true;
 }
 
@@ -330,7 +318,26 @@ static ExprStateEvalFunc tpde_codegen(TPDECompiledExprState* cstate)
 	return NULL;
 }
 
+static Datum
+ExecRunCompiledTPDEExpr(ExprState *state, ExprContext *econtext, bool *isNull)
+{
+	TPDECompiledExprState *cstate = (TPDECompiledExprState*) state->evalfunc_private;
 
+	CheckExprStillValid(state, econtext);
+
+	llvm_enter_fatal_on_oom();
+
+	elog(DEBUG1, "%s", "Before codegen");
+	ExprStateEvalFunc func = tpde_codegen(cstate);
+	elog(DEBUG1, "JIT compilation finished, func ptr: %p", (void*)func);
+
+	llvm_leave_fatal_on_oom();
+
+	Assert(func);
+	state->evalfunc = func;
+
+	return func(state, econtext, isNull);
+}
 
 void _PG_jit_provider_init(JitProviderCallbacks *cb)
 {
