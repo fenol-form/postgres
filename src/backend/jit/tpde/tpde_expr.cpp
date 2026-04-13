@@ -32,6 +32,7 @@
 #include <memory>
 #include <string_view>
 #include <sstream>
+#include <vector>
 #include "tpde/tpde-llvm/include/tpde-llvm/OrcCompiler.hpp"
 extern "C"
 {
@@ -53,11 +54,19 @@ static llvm::orc::ResourceTrackerSP resource_tracker;
 static llvm::orc::ThreadSafeContext llvm_ts_context;
 static std::optional<llvm::orc::JITTargetMachineBuilder> jtmb;
 
+/*
+ * List of ExprState objects whose IR has been built but whose compiled
+ * function pointer has not yet been installed.  Populated by
+ * tpde_compile_expr(); drained by tpde_compile_pending_exprs().
+ */
+static std::vector<ExprState *> pending_expr_states;
+
 
 static void tpde_release_context(JitContext *context);
 static void tpde_reset_after_error(void);
 static ExprStateEvalFunc tpde_codegen(TPDECompiledExprState* cstate);
 extern bool tpde_compile_expr(ExprState *state);
+static void tpde_compile_pending_exprs(JitContext *context);
 static Datum ExecRunCompiledTPDEExpr(ExprState *state, ExprContext *econtext, bool *isNull);
 
 /*
@@ -218,6 +227,12 @@ static LLVMJitContext* retrieve_or_init_jit_context(ExprState* state)
 
 static void tpde_release_context(JitContext *context)
 {
+	/*
+	 * Discard any pending states tied to this context so that stale
+	 * ExprState pointers don't survive into a subsequent query.
+	 */
+	pending_expr_states.clear();
+
 	llvm_release_context(context); // TODO: remove this ?
 
 	LLVMJitContext *llvm_jit_context = (LLVMJitContext *) context;
@@ -256,8 +271,13 @@ bool tpde_compile_expr(ExprState *state)
 		return false;
 	}
 
-	// do not compile immediately for an abiity to batch expression compilation
+	/*
+	 * Install a fallback evalfunc in case tpde_compile_pending_exprs() is
+	 * never reached (e.g. EXPLAIN without execution), and register this state
+	 * so tpde_compile_pending_exprs() can finalize it before the row loop.
+	 */
 	state->evalfunc = ExecRunCompiledTPDEExpr;
+	pending_expr_states.push_back(state);
 	return true;
 }
 
@@ -318,6 +338,62 @@ static ExprStateEvalFunc tpde_codegen(TPDECompiledExprState* cstate)
 	return NULL;
 }
 
+/*
+ * tpde_compile_pending_exprs
+ *
+ * Compile the shared LLVM module (once) and resolve every pending expression's
+ * function pointer, installing it directly into state->evalfunc.  After this
+ * returns, ExecRunCompiledTPDEExpr will not be called for any of these states.
+ *
+ * Called by jit_compile_pending() from standard_ExecutorRun(), before the
+ * first tuple is fetched.
+ */
+static void
+tpde_compile_pending_exprs(JitContext *jit_ctx)
+{
+	if (pending_expr_states.empty())
+		return;
+
+	llvm_enter_fatal_on_oom();
+
+	/*
+	 * Compile the module exactly once.  All pending ExprStates share the same
+	 * LLVMJitContext (one module per EState), so grabbing the context from the
+	 * first entry is sufficient.
+	 */
+	TPDECompiledExprState *first_cstate =
+		(TPDECompiledExprState *) pending_expr_states[0]->evalfunc_private;
+	if (!first_cstate->context->compiled)
+		llvm_compile_module(first_cstate->context);
+
+	instr_time	starttime;
+	instr_time	endtime;
+	INSTR_TIME_SET_CURRENT(starttime);
+
+	/* Resolve and install each expression's function pointer */
+	for (ExprState *state : pending_expr_states)
+	{
+		TPDECompiledExprState *cstate =
+			(TPDECompiledExprState *) state->evalfunc_private;
+
+		auto execAddr = lljit->lookup(cstate->funcname);
+		if (auto error = execAddr.takeError())
+			elog(ERROR, "failed to look up symbol \"%s\": %s",
+				 cstate->funcname, llvm::toString(std::move(error)).data());
+
+		Assert(execAddr);
+		state->evalfunc = execAddr->toPtr<ExprStateEvalFunc>();
+	}
+
+	INSTR_TIME_SET_CURRENT(endtime);
+	INSTR_TIME_ACCUM_DIFF(first_cstate->context->base.instr.emission_counter,
+						  endtime, starttime);
+
+	pending_expr_states.clear();
+
+	llvm_leave_fatal_on_oom();
+}
+
 static Datum
 ExecRunCompiledTPDEExpr(ExprState *state, ExprContext *econtext, bool *isNull)
 {
@@ -344,4 +420,5 @@ void _PG_jit_provider_init(JitProviderCallbacks *cb)
 	cb->reset_after_error = tpde_reset_after_error;
 	cb->release_context = tpde_release_context;
 	cb->compile_expr = tpde_compile_expr;
+	cb->compile_pending = tpde_compile_pending_exprs;
 }

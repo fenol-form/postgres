@@ -70,12 +70,14 @@ typedef void (*JitProviderResetAfterErrorCB) (void);
 typedef void (*JitProviderReleaseContextCB) (JitContext *context);
 struct ExprState;
 typedef bool (*JitProviderCompileExprCB) (struct ExprState *state);
+typedef void (*JitProviderCompilePendingCB) (JitContext *context);
 
 struct JitProviderCallbacks
 {
 	JitProviderResetAfterErrorCB reset_after_error;
 	JitProviderReleaseContextCB release_context;
 	JitProviderCompileExprCB compile_expr;
+	JitProviderCompilePendingCB compile_pending; /* may be NULL */
 };
 
 
@@ -100,6 +102,7 @@ extern void jit_release_context(JitContext *context);
  * not be able to perform JIT (i.e. return false).
  */
 extern bool jit_compile_expr(struct ExprState *state);
+extern void jit_compile_pending(JitContext *context);
 extern void InstrJitAgg(JitInstrumentation *dst, JitInstrumentation *add);
 
 

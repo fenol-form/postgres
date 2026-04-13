@@ -62,6 +62,7 @@
 #include "utils/partcache.h"
 #include "utils/rls.h"
 #include "utils/snapmgr.h"
+#include "jit/jit.h"
 
 
 /* Hooks for plugins to get control in ExecutorStart/Run/Finish/End */
@@ -363,12 +364,22 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 	 * parallel execution.  (That case should work, but it's untested.)
 	 */
 	if (!ScanDirectionIsNoMovement(direction))
+	{
+		/*
+		 * Finalize any pending JIT compilations before the first tuple is
+		 * fetched.  This ensures deferred compilation (e.g. TPDE lazy mode)
+		 * happens off the per-row hot path.
+		 */
+		if (estate->es_jit)
+			jit_compile_pending(estate->es_jit);
+
 		ExecutePlan(queryDesc,
 					operation,
 					sendTuples,
 					count,
 					direction,
 					dest);
+	}
 
 	/*
 	 * Update es_total_processed to keep track of the number of tuples
