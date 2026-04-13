@@ -3,8 +3,8 @@
 #include <llvm-19/llvm/Bitcode/BitcodeReader.h>
 #include <llvm-19/llvm/ExecutionEngine/JITSymbol.h>
 #include <llvm-19/llvm/ExecutionEngine/Orc/Core.h>
-#include <llvm-19/llvm/ExecutionEngine/Orc/DebugObjectManagerPlugin.h>
-#include <llvm-19/llvm/ExecutionEngine/Orc/Debugging/DebuggerSupportPlugin.h>
+#include <llvm-19/llvm/ExecutionEngine/Orc/Debugging/PerfSupportPlugin.h>
+#include <llvm-19/llvm/ExecutionEngine/Orc/TargetProcess/JITLoaderPerf.h>
 #include <llvm-19/llvm/ExecutionEngine/Orc/ExecutionUtils.h>
 #include <llvm-19/llvm/ExecutionEngine/Orc/IRCompileLayer.h>
 #include <llvm-19/llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h>
@@ -148,7 +148,6 @@ void tpde_create_compiler(const char * llvm_triple /*TargetMachine should be NUL
 	auto builder = orc::LLJITBuilder();
 	assert(!lljit_initialized);
 
-	auto llvm_triple_unwrapped = llvm::Triple(llvm_triple);
 	Assert(static_cast<bool>(jtmb));
 	builder.setJITTargetMachineBuilder(*jtmb);
 
@@ -174,17 +173,66 @@ void tpde_create_compiler(const char * llvm_triple /*TargetMachine should be NUL
 		elog(WARNING, "error during JITing: %s", strerr.c_str());
 	});
 
-	// try to add debug plugin
 	auto& main_jit_dylib = lljit->getMainJITDylib();
-	auto debuggingPluginPtr = std::shared_ptr<llvm::orc::GDBJITDebugInfoRegistrationPlugin>(nullptr);
-	if (auto debuggingPlugin = llvm::orc::GDBJITDebugInfoRegistrationPlugin::Create(lljit->getExecutionSession(), main_jit_dylib, llvm_triple_unwrapped)) {
-		debuggingPluginPtr = std::shared_ptr<llvm::orc::GDBJITDebugInfoRegistrationPlugin>(debuggingPlugin->release());
-		static_cast<orc::ObjectLinkingLayer&>(lljit->getObjLinkingLayer()).addPlugin(debuggingPluginPtr);
-	} else {
-		auto error = debuggingPlugin.takeError();
-		elog(WARNING, "failed to create debuggingPlugin: %s", llvm::toString(std::move(error)).data());	
+
+	/*
+	 * Pre-register perf runtime functions as absolute symbols in the JIT dylib.
+	 *
+	 * PerfSupportPlugin::Create() looks up llvm_orc_registerJITLoaderPerf*
+	 * via ORC's symbol resolution (DynamicLibrarySearchGenerator), which calls
+	 * dlsym(RTLD_DEFAULT, ...).  These functions live in libLLVM-19.so, but
+	 * that library is a transitive dependency of tpdejit.so and is therefore
+	 * loaded RTLD_LOCAL by postgres — invisible to RTLD_DEFAULT lookups.
+	 *
+	 * Taking the addresses directly (they are declared in JITLoaderPerf.h,
+	 * which is compiled into tpdejit.so, so the symbols resolve at link time)
+	 * and inserting them as absolute symbols bypasses the dynamic lookup.
+	 */
+	{
+		llvm::orc::SymbolMap perf_runtime_syms;
+		auto add_sym = [&](const char *name, auto *fptr) {
+			perf_runtime_syms[lljit->mangleAndIntern(name)] =
+				llvm::orc::ExecutorSymbolDef(
+					llvm::orc::ExecutorAddr::fromPtr(fptr),
+					llvm::JITSymbolFlags::Exported);
+		};
+		add_sym("llvm_orc_registerJITLoaderPerfStart",
+				&llvm_orc_registerJITLoaderPerfStart);
+		add_sym("llvm_orc_registerJITLoaderPerfImpl",
+				&llvm_orc_registerJITLoaderPerfImpl);
+		add_sym("llvm_orc_registerJITLoaderPerfEnd",
+				&llvm_orc_registerJITLoaderPerfEnd);
+		ExitOnErr(main_jit_dylib.define(
+			llvm::orc::absoluteSymbols(std::move(perf_runtime_syms))));
 	}
-	
+
+	/*
+	 * Add perf JIT support plugin.
+	 *
+	 * Writes a jitdump file to /tmp/jit-<pid>.dump as each function is
+	 * compiled.  After collection, run:
+	 *   perf inject --jit -i perf.data -o perf.jit.data
+	 * to merge the jitdump into the perf data, then generate flamegraphs
+	 * with perf-script + stackcollapse-perf + flamegraph as usual.
+	 *
+	 * EmitUnwindInfo=true is required for correct stack unwinding.
+	 */
+	if (auto perfPlugin = orc::PerfSupportPlugin::Create(
+			lljit->getExecutionSession().getExecutorProcessControl(),
+			main_jit_dylib,
+			/* EmitDebugInfo= */ false,
+			/* EmitUnwindInfo= */ true))
+	{
+		static_cast<orc::ObjectLinkingLayer&>(lljit->getObjLinkingLayer())
+			.addPlugin(std::move(*perfPlugin));
+		elog(DEBUG1, "perf JIT support plugin added");
+	}
+	else
+	{
+		elog(WARNING, "failed to add perf JIT plugin: %s",
+			 llvm::toString(perfPlugin.takeError()).data());
+	}
+
 	// add generators
 	char global_prefix = lljit->getDataLayout().getGlobalPrefix();
 	auto main_gen = llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(global_prefix);
