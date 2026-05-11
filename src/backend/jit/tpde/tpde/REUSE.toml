@@ -1,0 +1,14 @@
+version = 1
+SPDX-PackageName = "TPDE"
+SPDX-PackageSupplier = "Contributors to TPDE <https://tpde.org>"
+
+[[annotations]]
+path = ["docs/**"]
+SPDX-FileCopyrightText = "Contributors to TPDE <https://tpde.org>"
+SPDX-License-Identifier = "Apache-2.0 WITH LLVM-exception"
+
+[[annotations]]
+path = ["llvm.ab51eccf88f5.patch", "llvm.616f2b685b06.patch", "README.md", "tpde-llvm/test/benchmark/README.md"]
+SPDX-FileCopyrightText = "Contributors to TPDE <https://tpde.org>"
+SPDX-License-Identifier = "Apache-2.0 WITH LLVM-exception"
+

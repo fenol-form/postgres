@@ -38,4 +38,14 @@ for item in "$sourcetree"/Makefile `find "$sourcetree"/config "$sourcetree"/cont
     fi
 done
 
+# Collect all garbage from CMake for building
+for item in `find "$sourcetree"/src/backend/jit/tpde -name Makefile2 -print -o -name *.make -print -o -name link.txt -print -o -name *.ts -print`; do
+    filename=`expr "$item" : "$sourcetree\(.*\)"`
+    if test ! -f "${item}.in"; then
+        if cmp "$item" "$buildtree/$filename" >/dev/null 2>&1; then : ; else
+            ln -fs "$item" "$buildtree/$filename" || exit 1
+        fi
+    fi
+done
+
 exit 0

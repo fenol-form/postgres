@@ -177,6 +177,22 @@ jit_compile_expr(struct ExprState *state)
 	return false;
 }
 
+/*
+ * Finalize pending JIT compilations before query execution begins.
+ *
+ * Must be called after all jit_compile_expr() calls for a query (i.e., after
+ * plan initialization) and before the first tuple is fetched.  This moves the
+ * expensive compilation step off the per-row hot path.  Providers that already
+ * compile eagerly may leave compile_pending as NULL; this function is a no-op
+ * in that case.
+ */
+void
+jit_compile_pending(JitContext *context)
+{
+	if (provider_successfully_loaded && provider.compile_pending)
+		provider.compile_pending(context);
+}
+
 /* Aggregate JIT instrumentation information */
 void
 InstrJitAgg(JitInstrumentation *dst, JitInstrumentation *add)

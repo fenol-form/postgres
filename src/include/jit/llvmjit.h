@@ -15,7 +15,7 @@
  * To avoid breaking cpluspluscheck, allow including the file even when LLVM
  * is not available.
  */
-#ifdef USE_LLVM
+#if defined(USE_LLVM) || defined(USE_TPDE)
 
 #include "jit/llvmjit_backport.h"
 

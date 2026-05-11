@@ -19,10 +19,10 @@ m4_pattern_forbid(^PGAC_)dnl to catch undefined macros
 
 AC_INIT([PostgreSQL], [19devel], [pgsql-bugs@lists.postgresql.org], [], [https://www.postgresql.org/])
 
-m4_if(m4_defn([m4_PACKAGE_VERSION]), [2.69], [], [m4_fatal([Autoconf version 2.69 is required.
-Untested combinations of 'autoconf' and PostgreSQL versions are not
-recommended.  You can remove the check from 'configure.ac' but it is then
-your responsibility whether the result works or not.])])
+# m4_if(m4_defn([m4_PACKAGE_VERSION]), [2.69], [], [m4_fatal([Autoconf version 2.69 is required.
+# Untested combinations of 'autoconf' and PostgreSQL versions are not
+# recommended.  You can remove the check from 'configure.ac' but it is then
+# your responsibility whether the result works or not.])])
 AC_COPYRIGHT([Copyright (c) 1996-2025, PostgreSQL Global Development Group])
 AC_CONFIG_SRCDIR([src/backend/access/common/heaptuple.c])
 AC_CONFIG_AUX_DIR(config)
@@ -404,6 +404,21 @@ PGAC_ARG_BOOL(with, llvm, no, [build with LLVM based JIT support],
 AC_SUBST(with_llvm)
 dnl must use AS_IF here, else AC_REQUIRES inside PGAC_LLVM_SUPPORT malfunctions
 AS_IF([test "$with_llvm" = yes], [
+  PGAC_LLVM_SUPPORT()
+]) # fi
+
+#
+# TPDE
+#
+PGAC_ARG_BOOL(with, tpde, no, [build with TPDE based JIT support],
+              [AC_DEFINE([USE_TPDE], 1, [Define to 1 to build with TPDE based JIT support. (--with-tpde)])])
+AC_SUBST(with_tpde)
+dnl must use AS_IF here, else AC_REQUIRES inside PGAC_LLVM_SUPPORT malfunctions
+AS_IF([test "$with_tpde" = yes], [
+  AS_IF([test "$with_llvm" = yes], [
+    AC_MSG_ERROR([Cannot use 2 JIT providers simultaneously (tpde / llvm)])
+  ]) # fi
+  # TPDE requires LLVM
   PGAC_LLVM_SUPPORT()
 ]) # fi
 

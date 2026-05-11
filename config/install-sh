@@ -266,6 +266,8 @@ do
     fi
     dst=$dst_arg
 
+    echo "INSTALLL ${src} to ${dst}"
+
     # If destination is a directory, append the input filename; won't work
     # if double slashes aren't ignored.
     if test -d "$dst"; then
