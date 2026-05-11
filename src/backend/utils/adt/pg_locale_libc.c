@@ -45,8 +45,7 @@
  *
  * 2. When working in UTF8 encoding, we use the <wctype.h> functions.
  * This assumes that every platform uses Unicode codepoints directly
- * as the wchar_t representation of Unicode.  (XXX: ICU makes this assumption
- * even for non-UTF8 encodings, which may be a problem.)  On some platforms
+ * as the wchar_t representation of Unicode.  On some platforms
  * wchar_t is only 16 bits wide, so we have to punt for codepoints > 0xFFFF.
  *
  * 3. In all other encodings, we use the <ctype.h> functions for pg_wchar
@@ -186,6 +185,13 @@ wc_isxdigit_libc_sb(pg_wchar wc, pg_locale_t locale)
 }
 
 static bool
+wc_iscased_libc_sb(pg_wchar wc, pg_locale_t locale)
+{
+	return isupper_l((unsigned char) wc, locale->lt) ||
+		islower_l((unsigned char) wc, locale->lt);
+}
+
+static bool
 wc_isdigit_libc_mb(pg_wchar wc, pg_locale_t locale)
 {
 	return iswdigit_l((wint_t) wc, locale->lt);
@@ -249,11 +255,11 @@ wc_isxdigit_libc_mb(pg_wchar wc, pg_locale_t locale)
 #endif
 }
 
-static char
-char_tolower_libc(unsigned char ch, pg_locale_t locale)
+static bool
+wc_iscased_libc_mb(pg_wchar wc, pg_locale_t locale)
 {
-	Assert(pg_database_encoding_max_length() == 1);
-	return tolower_l(ch, locale->lt);
+	return iswupper_l((wint_t) wc, locale->lt) ||
+		iswlower_l((wint_t) wc, locale->lt);
 }
 
 static bool
@@ -327,6 +333,8 @@ static const struct ctype_methods ctype_methods_libc_sb = {
 	.strlower = strlower_libc_sb,
 	.strtitle = strtitle_libc_sb,
 	.strupper = strupper_libc_sb,
+	/* in libc, casefolding is the same as lowercasing */
+	.strfold = strlower_libc_sb,
 	.wc_isdigit = wc_isdigit_libc_sb,
 	.wc_isalpha = wc_isalpha_libc_sb,
 	.wc_isalnum = wc_isalnum_libc_sb,
@@ -338,10 +346,9 @@ static const struct ctype_methods ctype_methods_libc_sb = {
 	.wc_isspace = wc_isspace_libc_sb,
 	.wc_isxdigit = wc_isxdigit_libc_sb,
 	.char_is_cased = char_is_cased_libc,
-	.char_tolower = char_tolower_libc,
+	.wc_iscased = wc_iscased_libc_sb,
 	.wc_toupper = toupper_libc_sb,
 	.wc_tolower = tolower_libc_sb,
-	.max_chr = UCHAR_MAX,
 };
 
 /*
@@ -352,6 +359,8 @@ static const struct ctype_methods ctype_methods_libc_other_mb = {
 	.strlower = strlower_libc_mb,
 	.strtitle = strtitle_libc_mb,
 	.strupper = strupper_libc_mb,
+	/* in libc, casefolding is the same as lowercasing */
+	.strfold = strlower_libc_mb,
 	.wc_isdigit = wc_isdigit_libc_sb,
 	.wc_isalpha = wc_isalpha_libc_sb,
 	.wc_isalnum = wc_isalnum_libc_sb,
@@ -363,16 +372,17 @@ static const struct ctype_methods ctype_methods_libc_other_mb = {
 	.wc_isspace = wc_isspace_libc_sb,
 	.wc_isxdigit = wc_isxdigit_libc_sb,
 	.char_is_cased = char_is_cased_libc,
-	.char_tolower = char_tolower_libc,
+	.wc_iscased = wc_iscased_libc_sb,
 	.wc_toupper = toupper_libc_sb,
 	.wc_tolower = tolower_libc_sb,
-	.max_chr = UCHAR_MAX,
 };
 
 static const struct ctype_methods ctype_methods_libc_utf8 = {
 	.strlower = strlower_libc_mb,
 	.strtitle = strtitle_libc_mb,
 	.strupper = strupper_libc_mb,
+	/* in libc, casefolding is the same as lowercasing */
+	.strfold = strlower_libc_mb,
 	.wc_isdigit = wc_isdigit_libc_mb,
 	.wc_isalpha = wc_isalpha_libc_mb,
 	.wc_isalnum = wc_isalnum_libc_mb,
@@ -384,7 +394,7 @@ static const struct ctype_methods ctype_methods_libc_utf8 = {
 	.wc_isspace = wc_isspace_libc_mb,
 	.wc_isxdigit = wc_isxdigit_libc_mb,
 	.char_is_cased = char_is_cased_libc,
-	.char_tolower = char_tolower_libc,
+	.wc_iscased = wc_iscased_libc_mb,
 	.wc_toupper = toupper_libc_mb,
 	.wc_tolower = tolower_libc_mb,
 };
@@ -435,9 +445,6 @@ strlower_libc_sb(char *dest, size_t destsize, const char *src, ssize_t srclen,
 		locale_t	loc = locale->lt;
 		char	   *p;
 
-		if (srclen + 1 > destsize)
-			return srclen;
-
 		memcpy(dest, src, srclen);
 		dest[srclen] = '\0';
 
@@ -451,7 +458,12 @@ strlower_libc_sb(char *dest, size_t destsize, const char *src, ssize_t srclen,
 		for (p = dest; *p; p++)
 		{
 			if (locale->is_default)
-				*p = pg_tolower((unsigned char) *p);
+			{
+				if (*p >= 'A' && *p <= 'Z')
+					*p += 'a' - 'A';
+				else if (IS_HIGHBIT_SET(*p) && isupper_l(*p, loc))
+					*p = tolower_l((unsigned char) *p, loc);
+			}
 			else
 				*p = tolower_l((unsigned char) *p, loc);
 		}
@@ -481,7 +493,7 @@ strlower_libc_mb(char *dest, size_t destsize, const char *src, ssize_t srclen,
 				 errmsg("out of memory")));
 
 	/* Output workspace cannot have more codes than input bytes */
-	workspace = (wchar_t *) palloc((srclen + 1) * sizeof(wchar_t));
+	workspace = palloc_array(wchar_t, srclen + 1);
 
 	char2wchar(workspace, srclen + 1, src, srclen, loc);
 
@@ -536,9 +548,19 @@ strtitle_libc_sb(char *dest, size_t destsize, const char *src, ssize_t srclen,
 			if (locale->is_default)
 			{
 				if (wasalnum)
-					*p = pg_tolower((unsigned char) *p);
+				{
+					if (*p >= 'A' && *p <= 'Z')
+						*p += 'a' - 'A';
+					else if (IS_HIGHBIT_SET(*p) && isupper_l(*p, loc))
+						*p = tolower_l((unsigned char) *p, loc);
+				}
 				else
-					*p = pg_toupper((unsigned char) *p);
+				{
+					if (*p >= 'a' && *p <= 'z')
+						*p -= 'a' - 'A';
+					else if (IS_HIGHBIT_SET(*p) && islower_l(*p, loc))
+						*p = toupper_l((unsigned char) *p, loc);
+				}
 			}
 			else
 			{
@@ -576,7 +598,7 @@ strtitle_libc_mb(char *dest, size_t destsize, const char *src, ssize_t srclen,
 				 errmsg("out of memory")));
 
 	/* Output workspace cannot have more codes than input bytes */
-	workspace = (wchar_t *) palloc((srclen + 1) * sizeof(wchar_t));
+	workspace = palloc_array(wchar_t, srclen + 1);
 
 	char2wchar(workspace, srclen + 1, src, srclen, loc);
 
@@ -634,7 +656,12 @@ strupper_libc_sb(char *dest, size_t destsize, const char *src, ssize_t srclen,
 		for (p = dest; *p; p++)
 		{
 			if (locale->is_default)
-				*p = pg_toupper((unsigned char) *p);
+			{
+				if (*p >= 'a' && *p <= 'z')
+					*p -= 'a' - 'A';
+				else if (IS_HIGHBIT_SET(*p) && islower_l(*p, loc))
+					*p = toupper_l((unsigned char) *p, loc);
+			}
 			else
 				*p = toupper_l((unsigned char) *p, loc);
 		}
@@ -664,7 +691,7 @@ strupper_libc_mb(char *dest, size_t destsize, const char *src, ssize_t srclen,
 				 errmsg("out of memory")));
 
 	/* Output workspace cannot have more codes than input bytes */
-	workspace = (wchar_t *) palloc((srclen + 1) * sizeof(wchar_t));
+	workspace = palloc_array(wchar_t, srclen + 1);
 
 	char2wchar(workspace, srclen + 1, src, srclen, loc);
 

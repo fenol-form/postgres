@@ -249,7 +249,7 @@ begin_heap_rewrite(Relation old_heap, Relation new_heap, TransactionId oldest_xm
 	old_cxt = MemoryContextSwitchTo(rw_cxt);
 
 	/* Create and fill in the state struct */
-	state = palloc0(sizeof(RewriteStateData));
+	state = palloc0_object(RewriteStateData);
 
 	state->rs_old_rel = old_heap;
 	state->rs_new_rel = new_heap;
@@ -1169,7 +1169,7 @@ CheckPointLogicalRewriteHeap(void)
 	cutoff = ReplicationSlotsComputeLogicalRestartLSN();
 
 	/* don't start earlier than the restart lsn */
-	if (cutoff != InvalidXLogRecPtr && redo < cutoff)
+	if (XLogRecPtrIsValid(cutoff) && redo < cutoff)
 		cutoff = redo;
 
 	mappings_dir = AllocateDir(PG_LOGICAL_MAPPINGS_DIR);
@@ -1204,7 +1204,7 @@ CheckPointLogicalRewriteHeap(void)
 
 		lsn = ((uint64) hi) << 32 | lo;
 
-		if (lsn < cutoff || cutoff == InvalidXLogRecPtr)
+		if (lsn < cutoff || !XLogRecPtrIsValid(cutoff))
 		{
 			elog(DEBUG1, "removing logical rewrite file \"%s\"", path);
 			if (unlink(path) < 0)

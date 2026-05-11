@@ -1477,7 +1477,7 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 	struct pollfd *cur_pollfd;
 
 	/* Sleep */
-	rc = poll(set->pollfds, set->nevents, (int) cur_timeout);
+	rc = poll(set->pollfds, set->nevents, cur_timeout);
 
 	/* Check return code */
 	if (rc < 0)
@@ -2010,7 +2010,7 @@ ResOwnerReleaseWaitEventSet(Datum res)
  * NB: be sure to save and restore errno around it.  (That's standard practice
  * in most signal handlers, of course, but we used to omit it in handlers that
  * only set a flag.) XXX
-  *
+ *
  * NB: this function is called from critical sections and signal handlers so
  * throwing an error is not a good idea.
  *

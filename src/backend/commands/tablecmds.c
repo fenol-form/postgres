@@ -999,7 +999,7 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 
 			Assert(colDef->cooked_default == NULL);
 
-			rawEnt = (RawColumnDefault *) palloc(sizeof(RawColumnDefault));
+			rawEnt = palloc_object(RawColumnDefault);
 			rawEnt->attnum = attnum;
 			rawEnt->raw_default = colDef->raw_default;
 			rawEnt->generated = colDef->generated;
@@ -1009,7 +1009,7 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 		{
 			CookedConstraint *cooked;
 
-			cooked = (CookedConstraint *) palloc(sizeof(CookedConstraint));
+			cooked = palloc_object(CookedConstraint);
 			cooked->contype = CONSTR_DEFAULT;
 			cooked->conoid = InvalidOid;	/* until created */
 			cooked->name = NULL;
@@ -6205,7 +6205,7 @@ ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap)
 		NewColumnValue *ex = lfirst(l);
 
 		/* expr already planned */
-		ex->exprstate = ExecInitExpr((Expr *) ex->expr, NULL);
+		ex->exprstate = ExecInitExpr(ex->expr, NULL);
 	}
 
 	notnull_attrs = notnull_virtual_attrs = NIL;
@@ -6568,7 +6568,7 @@ ATGetQueueEntry(List **wqueue, Relation rel)
 	 * Not there, so add it.  Note that we make a copy of the relation's
 	 * existing descriptor before anything interesting can happen to it.
 	 */
-	tab = (AlteredTableInfo *) palloc0(sizeof(AlteredTableInfo));
+	tab = palloc0_object(AlteredTableInfo);
 	tab->relid = relid;
 	tab->rel = NULL;			/* set later */
 	tab->relkind = rel->rd_rel->relkind;
@@ -7406,7 +7406,7 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 	{
 		RawColumnDefault *rawEnt;
 
-		rawEnt = (RawColumnDefault *) palloc(sizeof(RawColumnDefault));
+		rawEnt = palloc_object(RawColumnDefault);
 		rawEnt->attnum = attribute->attnum;
 		rawEnt->raw_default = copyObject(colDef->raw_default);
 		rawEnt->generated = colDef->generated;
@@ -7507,7 +7507,7 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 			defval = expression_planner(defval);
 
 			/* Add the new default to the newvals list */
-			newval = (NewColumnValue *) palloc0(sizeof(NewColumnValue));
+			newval = palloc0_object(NewColumnValue);
 			newval->attnum = attribute->attnum;
 			newval->expr = defval;
 			newval->is_generated = (colDef->generated != '\0');
@@ -8176,7 +8176,7 @@ ATExecColumnDefault(Relation rel, const char *colName,
 		/* SET DEFAULT */
 		RawColumnDefault *rawEnt;
 
-		rawEnt = (RawColumnDefault *) palloc(sizeof(RawColumnDefault));
+		rawEnt = palloc_object(RawColumnDefault);
 		rawEnt->attnum = attnum;
 		rawEnt->raw_default = newDefault;
 		rawEnt->generated = '\0';
@@ -8280,6 +8280,31 @@ ATExecAddIdentity(Relation rel, const char *colName,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("column \"%s\" of relation \"%s\" must be declared NOT NULL before identity can be added",
 						colName, RelationGetRelationName(rel))));
+
+	/*
+	 * On the other hand, if a not-null constraint exists, then verify that
+	 * it's compatible.
+	 */
+	if (attTup->attnotnull)
+	{
+		HeapTuple	contup;
+		Form_pg_constraint conForm;
+
+		contup = findNotNullConstraintAttnum(RelationGetRelid(rel),
+											 attnum);
+		if (!HeapTupleIsValid(contup))
+			elog(ERROR, "cache lookup failed for not-null constraint on column \"%s\" of relation \"%s\"",
+				 colName, RelationGetRelationName(rel));
+
+		conForm = (Form_pg_constraint) GETSTRUCT(contup);
+		if (!conForm->convalidated)
+			ereport(ERROR,
+					errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					errmsg("incompatible NOT VALID constraint \"%s\" on relation \"%s\"",
+						   NameStr(conForm->conname), RelationGetRelationName(rel)),
+					errhint("You might need to validate it using %s.",
+							"ALTER TABLE ... VALIDATE CONSTRAINT"));
+	}
 
 	if (attTup->attidentity)
 		ereport(ERROR,
@@ -8679,7 +8704,7 @@ ATExecSetExpression(AlteredTableInfo *tab, Relation rel, const char *colName,
 					  false, false);
 
 	/* Prepare to store the new expression, in the catalogs */
-	rawEnt = (RawColumnDefault *) palloc(sizeof(RawColumnDefault));
+	rawEnt = palloc_object(RawColumnDefault);
 	rawEnt->attnum = attnum;
 	rawEnt->raw_default = newExpr;
 	rawEnt->generated = attgenerated;
@@ -8696,7 +8721,7 @@ ATExecSetExpression(AlteredTableInfo *tab, Relation rel, const char *colName,
 		/* Prepare for table rewrite */
 		defval = (Expr *) build_column_default(rel, attnum);
 
-		newval = (NewColumnValue *) palloc0(sizeof(NewColumnValue));
+		newval = palloc0_object(NewColumnValue);
 		newval->attnum = attnum;
 		newval->expr = expression_planner(defval);
 		newval->is_generated = true;
@@ -9657,7 +9682,7 @@ ATExecAddStatistics(AlteredTableInfo *tab, Relation rel,
 	/* The CreateStatsStmt has already been through transformStatsStmt */
 	Assert(stmt->transformed);
 
-	address = CreateStatistics(stmt);
+	address = CreateStatistics(stmt, !is_rebuild);
 
 	return address;
 }
@@ -9924,7 +9949,7 @@ ATAddCheckNNConstraint(List **wqueue, AlteredTableInfo *tab, Relation rel,
 		{
 			NewConstraint *newcon;
 
-			newcon = (NewConstraint *) palloc0(sizeof(NewConstraint));
+			newcon = palloc0_object(NewConstraint);
 			newcon->name = ccon->name;
 			newcon->contype = ccon->contype;
 			newcon->qual = ccon->expr;
@@ -10921,7 +10946,7 @@ addFkRecurseReferenced(Constraint *fkconstraint, Relation rel,
 											   false);
 			if (map)
 			{
-				mapped_pkattnum = palloc(sizeof(AttrNumber) * numfks);
+				mapped_pkattnum = palloc_array(AttrNumber, numfks);
 				for (int j = 0; j < numfks; j++)
 					mapped_pkattnum[j] = map->attnums[pkattnum[j] - 1];
 			}
@@ -11056,7 +11081,7 @@ addFkRecurseReferencing(List **wqueue, Constraint *fkconstraint, Relation rel,
 
 			tab = ATGetQueueEntry(wqueue, rel);
 
-			newcon = (NewConstraint *) palloc0(sizeof(NewConstraint));
+			newcon = palloc0_object(NewConstraint);
 			newcon->name = get_constraint_name(parentConstr);
 			newcon->contype = CONSTR_FOREIGN;
 			newcon->refrelid = RelationGetRelid(pkrel);
@@ -12478,7 +12503,7 @@ ATExecAlterConstrEnforceability(List **wqueue, ATAlterConstraint *cmdcon,
 			AlteredTableInfo *tab;
 			NewConstraint *newcon;
 
-			newcon = (NewConstraint *) palloc0(sizeof(NewConstraint));
+			newcon = palloc0_object(NewConstraint);
 			newcon->name = fkconstraint->conname;
 			newcon->contype = CONSTR_FOREIGN;
 			newcon->refrelid = currcon->confrelid;
@@ -12994,7 +13019,7 @@ QueueFKConstraintValidation(List **wqueue, Relation conrel, Relation fkrel,
 		/* for now this is all we need */
 		fkconstraint->conname = pstrdup(NameStr(con->conname));
 
-		newcon = (NewConstraint *) palloc0(sizeof(NewConstraint));
+		newcon = palloc0_object(NewConstraint);
 		newcon->name = fkconstraint->conname;
 		newcon->contype = CONSTR_FOREIGN;
 		newcon->refrelid = con->confrelid;
@@ -13142,7 +13167,7 @@ QueueCheckConstraintValidation(List **wqueue, Relation conrel, Relation rel,
 	}
 
 	/* Queue validation for phase 3 */
-	newcon = (NewConstraint *) palloc0(sizeof(NewConstraint));
+	newcon = palloc0_object(NewConstraint);
 	newcon->name = constrName;
 	newcon->contype = CONSTR_CHECK;
 	newcon->refrelid = InvalidOid;
@@ -14497,7 +14522,7 @@ ATPrepAlterColumnType(List **wqueue,
 		 * Add a work queue item to make ATRewriteTable update the column
 		 * contents.
 		 */
-		newval = (NewColumnValue *) palloc0(sizeof(NewColumnValue));
+		newval = palloc0_object(NewColumnValue);
 		newval->attnum = attnum;
 		newval->expr = (Expr *) transform;
 		newval->is_generated = false;
@@ -19237,7 +19262,7 @@ register_on_commit_action(Oid relid, OnCommitAction action)
 
 	oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
 
-	oc = (OnCommitItem *) palloc(sizeof(OnCommitItem));
+	oc = palloc_object(OnCommitItem);
 	oc->relid = relid;
 	oc->oncommit = action;
 	oc->creating_subid = GetCurrentSubTransactionId();
@@ -19810,6 +19835,8 @@ ComputePartitionAttrs(ParseState *pstate, Relation rel, List *partParams, AttrNu
 			/* Expression */
 			Node	   *expr = pelem->expr;
 			char		partattname[16];
+			Bitmapset  *expr_attrs = NULL;
+			int			i;
 
 			Assert(expr != NULL);
 			atttype = exprType(expr);
@@ -19833,43 +19860,36 @@ ComputePartitionAttrs(ParseState *pstate, Relation rel, List *partParams, AttrNu
 			while (IsA(expr, CollateExpr))
 				expr = (Node *) ((CollateExpr *) expr)->arg;
 
-			if (IsA(expr, Var) &&
-				((Var *) expr)->varattno > 0)
+			/*
+			 * Examine all the columns in the partition key expression. When
+			 * the whole-row reference is present, examine all the columns of
+			 * the partitioned table.
+			 */
+			pull_varattnos(expr, 1, &expr_attrs);
+			if (bms_is_member(0 - FirstLowInvalidHeapAttributeNumber, expr_attrs))
 			{
-				/*
-				 * User wrote "(column)" or "(column COLLATE something)".
-				 * Treat it like simple attribute anyway.
-				 */
-				partattrs[attn] = ((Var *) expr)->varattno;
+				expr_attrs = bms_add_range(expr_attrs,
+										   1 - FirstLowInvalidHeapAttributeNumber,
+										   RelationGetNumberOfAttributes(rel) - FirstLowInvalidHeapAttributeNumber);
+				expr_attrs = bms_del_member(expr_attrs, 0 - FirstLowInvalidHeapAttributeNumber);
 			}
-			else
+
+			i = -1;
+			while ((i = bms_next_member(expr_attrs, i)) >= 0)
 			{
-				Bitmapset  *expr_attrs = NULL;
-				int			i;
+				AttrNumber	attno = i + FirstLowInvalidHeapAttributeNumber;
 
-				partattrs[attn] = 0;	/* marks the column as expression */
-				*partexprs = lappend(*partexprs, expr);
-
-				/*
-				 * transformPartitionSpec() should have already rejected
-				 * subqueries, aggregates, window functions, and SRFs, based
-				 * on the EXPR_KIND_ for partition expressions.
-				 */
+				Assert(attno != 0);
 
 				/*
 				 * Cannot allow system column references, since that would
 				 * make partition routing impossible: their values won't be
 				 * known yet when we need to do that.
 				 */
-				pull_varattnos(expr, 1, &expr_attrs);
-				for (i = FirstLowInvalidHeapAttributeNumber; i < 0; i++)
-				{
-					if (bms_is_member(i - FirstLowInvalidHeapAttributeNumber,
-									  expr_attrs))
-						ereport(ERROR,
-								(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-								 errmsg("partition key expressions cannot contain system column references")));
-				}
+				if (attno < 0)
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+							 errmsg("partition key expressions cannot contain system column references")));
 
 				/*
 				 * Stored generated columns cannot work: They are computed
@@ -19879,20 +19899,35 @@ ComputePartitionAttrs(ParseState *pstate, Relation rel, List *partParams, AttrNu
 				 * SET EXPRESSION would need to check whether the column is
 				 * used in partition keys).  Seems safer to prohibit for now.
 				 */
-				i = -1;
-				while ((i = bms_next_member(expr_attrs, i)) >= 0)
-				{
-					AttrNumber	attno = i + FirstLowInvalidHeapAttributeNumber;
+				if (TupleDescAttr(RelationGetDescr(rel), attno - 1)->attgenerated)
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+							 errmsg("cannot use generated column in partition key"),
+							 errdetail("Column \"%s\" is a generated column.",
+									   get_attname(RelationGetRelid(rel), attno, false)),
+							 parser_errposition(pstate, pelem->location)));
+			}
 
-					if (attno > 0 &&
-						TupleDescAttr(RelationGetDescr(rel), attno - 1)->attgenerated)
-						ereport(ERROR,
-								(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-								 errmsg("cannot use generated column in partition key"),
-								 errdetail("Column \"%s\" is a generated column.",
-										   get_attname(RelationGetRelid(rel), attno, false)),
-								 parser_errposition(pstate, pelem->location)));
-				}
+			if (IsA(expr, Var) &&
+				((Var *) expr)->varattno > 0)
+			{
+
+				/*
+				 * User wrote "(column)" or "(column COLLATE something)".
+				 * Treat it like simple attribute anyway.
+				 */
+				partattrs[attn] = ((Var *) expr)->varattno;
+			}
+			else
+			{
+				partattrs[attn] = 0;	/* marks the column as expression */
+				*partexprs = lappend(*partexprs, expr);
+
+				/*
+				 * transformPartitionSpec() should have already rejected
+				 * subqueries, aggregates, window functions, and SRFs, based
+				 * on the EXPR_KIND_ for partition expressions.
+				 */
 
 				/*
 				 * Preprocess the expression before checking for mutability.
@@ -20540,8 +20575,8 @@ AttachPartitionEnsureIndexes(List **wqueue, Relation rel, Relation attachrel)
 
 	idxes = RelationGetIndexList(rel);
 	attachRelIdxs = RelationGetIndexList(attachrel);
-	attachrelIdxRels = palloc(sizeof(Relation) * list_length(attachRelIdxs));
-	attachInfos = palloc(sizeof(IndexInfo *) * list_length(attachRelIdxs));
+	attachrelIdxRels = palloc_array(Relation, list_length(attachRelIdxs));
+	attachInfos = palloc_array(IndexInfo *, list_length(attachRelIdxs));
 
 	/* Build arrays of all existing indexes and their IndexInfos */
 	foreach_oid(cldIdxId, attachRelIdxs)

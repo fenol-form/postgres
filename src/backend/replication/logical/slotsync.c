@@ -71,11 +71,14 @@
 /*
  * Struct for sharing information to control slot synchronization.
  *
- * The slot sync worker's pid is needed by the startup process to shut it
- * down during promotion. The startup process shuts down the slot sync worker
- * and also sets stopSignaled=true to handle the race condition when the
+ * The 'pid' is either the slot sync worker's pid or the backend's pid running
+ * the SQL function pg_sync_replication_slots(). When the startup process sets
+ * 'stopSignaled' during promotion, it uses this 'pid' to wake up the currently
+ * synchronizing process so that the process can immediately stop its
+ * synchronizing work on seeing 'stopSignaled' set.
+ * Setting 'stopSignaled' is also used to handle the race condition when the
  * postmaster has not noticed the promotion yet and thus may end up restarting
- * the slot sync worker. If stopSignaled is set, the worker will exit in such a
+ * the slot sync worker. If 'stopSignaled' is set, the worker will exit in such a
  * case. The SQL function pg_sync_replication_slots() will also error out if
  * this flag is set. Note that we don't need to reset this variable as after
  * promotion the slot sync worker won't be restarted because the pmState
@@ -149,6 +152,35 @@ static void slotsync_failure_callback(int code, Datum arg);
 static void update_synced_slots_inactive_since(void);
 
 /*
+ * Update slot sync skip stats. This function requires the caller to acquire
+ * the slot.
+ */
+static void
+update_slotsync_skip_stats(SlotSyncSkipReason skip_reason)
+{
+	ReplicationSlot *slot;
+
+	Assert(MyReplicationSlot);
+
+	slot = MyReplicationSlot;
+
+	/*
+	 * Update the slot sync related stats in pg_stat_replication_slot when a
+	 * slot sync is skipped
+	 */
+	if (skip_reason != SS_SKIP_NONE)
+		pgstat_report_replslotsync(slot);
+
+	/* Update the slot sync skip reason */
+	if (slot->slotsync_skip_reason != skip_reason)
+	{
+		SpinLockAcquire(&slot->mutex);
+		slot->slotsync_skip_reason = skip_reason;
+		SpinLockRelease(&slot->mutex);
+	}
+}
+
+/*
  * If necessary, update the local synced slot's metadata based on the data
  * from the remote slot.
  *
@@ -170,6 +202,7 @@ update_local_synced_slot(RemoteSlot *remote_slot, Oid remote_dbid,
 	ReplicationSlot *slot = MyReplicationSlot;
 	bool		updated_xmin_or_lsn = false;
 	bool		updated_config = false;
+	SlotSyncSkipReason skip_reason = SS_SKIP_NONE;
 
 	Assert(slot->data.invalidated == RS_INVAL_NONE);
 
@@ -187,6 +220,9 @@ update_local_synced_slot(RemoteSlot *remote_slot, Oid remote_dbid,
 		TransactionIdPrecedes(remote_slot->catalog_xmin,
 							  slot->data.catalog_xmin))
 	{
+		/* Update slot sync skip stats */
+		update_slotsync_skip_stats(SS_SKIP_WAL_OR_ROWS_REMOVED);
+
 		/*
 		 * This can happen in following situations:
 		 *
@@ -277,10 +313,20 @@ update_local_synced_slot(RemoteSlot *remote_slot, Oid remote_dbid,
 						errdetail_internal("Remote slot has LSN %X/%08X but local slot has LSN %X/%08X.",
 										   LSN_FORMAT_ARGS(remote_slot->confirmed_lsn),
 										   LSN_FORMAT_ARGS(slot->data.confirmed_flush)));
+
+			/*
+			 * If we can't reach a consistent snapshot, the slot won't be
+			 * persisted. See update_and_persist_local_synced_slot().
+			 */
+			if (found_consistent_snapshot && !(*found_consistent_snapshot))
+				skip_reason = SS_SKIP_NO_CONSISTENT_SNAPSHOT;
 		}
 
 		updated_xmin_or_lsn = true;
 	}
+
+	/* Update slot sync skip stats */
+	update_slotsync_skip_stats(skip_reason);
 
 	if (remote_dbid != slot->data.database ||
 		remote_slot->two_phase != slot->data.two_phase ||
@@ -493,7 +539,7 @@ reserve_wal_for_local_slot(XLogRecPtr restart_lsn)
 	ReplicationSlot *slot = MyReplicationSlot;
 
 	Assert(slot != NULL);
-	Assert(XLogRecPtrIsInvalid(slot->data.restart_lsn));
+	Assert(!XLogRecPtrIsValid(slot->data.restart_lsn));
 
 	while (true)
 	{
@@ -563,6 +609,7 @@ update_and_persist_local_synced_slot(RemoteSlot *remote_slot, Oid remote_dbid)
 	bool		found_consistent_snapshot = false;
 	bool		remote_slot_precedes = false;
 
+	/* Slotsync skip stats are handled in function update_local_synced_slot() */
 	(void) update_local_synced_slot(remote_slot, remote_dbid,
 									&found_consistent_snapshot,
 									&remote_slot_precedes);
@@ -624,30 +671,8 @@ static bool
 synchronize_one_slot(RemoteSlot *remote_slot, Oid remote_dbid)
 {
 	ReplicationSlot *slot;
-	XLogRecPtr	latestFlushPtr;
+	XLogRecPtr	latestFlushPtr = GetStandbyFlushRecPtr(NULL);
 	bool		slot_updated = false;
-
-	/*
-	 * Make sure that concerned WAL is received and flushed before syncing
-	 * slot to target lsn received from the primary server.
-	 */
-	latestFlushPtr = GetStandbyFlushRecPtr(NULL);
-	if (remote_slot->confirmed_lsn > latestFlushPtr)
-	{
-		/*
-		 * Can get here only if GUC 'synchronized_standby_slots' on the
-		 * primary server was not configured correctly.
-		 */
-		ereport(AmLogicalSlotSyncWorkerProcess() ? LOG : ERROR,
-				errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-				errmsg("skipping slot synchronization because the received slot sync"
-					   " LSN %X/%08X for slot \"%s\" is ahead of the standby position %X/%08X",
-					   LSN_FORMAT_ARGS(remote_slot->confirmed_lsn),
-					   remote_slot->name,
-					   LSN_FORMAT_ARGS(latestFlushPtr)));
-
-		return false;
-	}
 
 	/* Search for the named slot */
 	if ((slot = SearchNamedReplicationSlot(remote_slot->name, true)))
@@ -707,7 +732,37 @@ synchronize_one_slot(RemoteSlot *remote_slot, Oid remote_dbid)
 		/* Skip the sync of an invalidated slot */
 		if (slot->data.invalidated != RS_INVAL_NONE)
 		{
+			update_slotsync_skip_stats(SS_SKIP_INVALID);
+
 			ReplicationSlotRelease();
+			return slot_updated;
+		}
+
+		/*
+		 * Make sure that concerned WAL is received and flushed before syncing
+		 * slot to target lsn received from the primary server.
+		 *
+		 * Report statistics only after the slot has been acquired, ensuring
+		 * it cannot be dropped during the reporting process.
+		 */
+		if (remote_slot->confirmed_lsn > latestFlushPtr)
+		{
+			update_slotsync_skip_stats(SS_SKIP_WAL_NOT_FLUSHED);
+
+			/*
+			 * Can get here only if GUC 'synchronized_standby_slots' on the
+			 * primary server was not configured correctly.
+			 */
+			ereport(AmLogicalSlotSyncWorkerProcess() ? LOG : ERROR,
+					errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					errmsg("skipping slot synchronization because the received slot sync"
+						   " LSN %X/%08X for slot \"%s\" is ahead of the standby position %X/%08X",
+						   LSN_FORMAT_ARGS(remote_slot->confirmed_lsn),
+						   remote_slot->name,
+						   LSN_FORMAT_ARGS(latestFlushPtr)));
+
+			ReplicationSlotRelease();
+
 			return slot_updated;
 		}
 
@@ -784,6 +839,34 @@ synchronize_one_slot(RemoteSlot *remote_slot, Oid remote_dbid)
 		ReplicationSlotsComputeRequiredXmin(true);
 		LWLockRelease(ProcArrayLock);
 
+		/*
+		 * Make sure that concerned WAL is received and flushed before syncing
+		 * slot to target lsn received from the primary server.
+		 *
+		 * Report statistics only after the slot has been acquired, ensuring
+		 * it cannot be dropped during the reporting process.
+		 */
+		if (remote_slot->confirmed_lsn > latestFlushPtr)
+		{
+			update_slotsync_skip_stats(SS_SKIP_WAL_NOT_FLUSHED);
+
+			/*
+			 * Can get here only if GUC 'synchronized_standby_slots' on the
+			 * primary server was not configured correctly.
+			 */
+			ereport(AmLogicalSlotSyncWorkerProcess() ? LOG : ERROR,
+					errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					errmsg("skipping slot synchronization because the received slot sync"
+						   " LSN %X/%08X for slot \"%s\" is ahead of the standby position %X/%08X",
+						   LSN_FORMAT_ARGS(remote_slot->confirmed_lsn),
+						   remote_slot->name,
+						   LSN_FORMAT_ARGS(latestFlushPtr)));
+
+			ReplicationSlotRelease();
+
+			return false;
+		}
+
 		update_and_persist_local_synced_slot(remote_slot, remote_dbid);
 
 		slot_updated = true;
@@ -839,7 +922,7 @@ synchronize_slots(WalReceiverConn *wrconn)
 	while (tuplestore_gettupleslot(res->tuplestore, true, false, tupslot))
 	{
 		bool		isnull;
-		RemoteSlot *remote_slot = palloc0(sizeof(RemoteSlot));
+		RemoteSlot *remote_slot = palloc0_object(RemoteSlot);
 		Datum		d;
 		int			col = 0;
 
@@ -899,8 +982,8 @@ synchronize_slots(WalReceiverConn *wrconn)
 		 * pg_replication_slots view, then we can avoid fetching RS_EPHEMERAL
 		 * slots in the first place.
 		 */
-		if ((XLogRecPtrIsInvalid(remote_slot->restart_lsn) ||
-			 XLogRecPtrIsInvalid(remote_slot->confirmed_lsn) ||
+		if ((!XLogRecPtrIsValid(remote_slot->restart_lsn) ||
+			 !XLogRecPtrIsValid(remote_slot->confirmed_lsn) ||
 			 !TransactionIdIsValid(remote_slot->catalog_xmin)) &&
 			remote_slot->invalidated == RS_INVAL_NONE)
 			pfree(remote_slot);
@@ -1115,10 +1198,10 @@ ValidateSlotSyncParams(int elevel)
 }
 
 /*
- * Re-read the config file.
+ * Re-read the config file for slot synchronization.
  *
- * Exit if any of the slot sync GUCs have changed. The postmaster will
- * restart it.
+ * Exit or throw error if relevant GUCs have changed depending on whether
+ * called from slot sync worker or from the SQL function pg_sync_replication_slots()
  */
 static void
 slotsync_reread_config(void)
@@ -1129,8 +1212,11 @@ slotsync_reread_config(void)
 	bool		old_hot_standby_feedback = hot_standby_feedback;
 	bool		conninfo_changed;
 	bool		primary_slotname_changed;
+	bool		is_slotsync_worker = AmLogicalSlotSyncWorkerProcess();
+	bool		parameter_changed = false;
 
-	Assert(sync_replication_slots);
+	if (is_slotsync_worker)
+		Assert(sync_replication_slots);
 
 	ConfigReloadPending = false;
 	ProcessConfigFile(PGC_SIGHUP);
@@ -1142,44 +1228,85 @@ slotsync_reread_config(void)
 
 	if (old_sync_replication_slots != sync_replication_slots)
 	{
-		ereport(LOG,
-		/* translator: %s is a GUC variable name */
-				errmsg("replication slot synchronization worker will shut down because \"%s\" is disabled", "sync_replication_slots"));
-		proc_exit(0);
+		if (is_slotsync_worker)
+		{
+			ereport(LOG,
+			/* translator: %s is a GUC variable name */
+					errmsg("replication slot synchronization worker will stop because \"%s\" is disabled",
+						   "sync_replication_slots"));
+
+			proc_exit(0);
+		}
+
+		parameter_changed = true;
+	}
+	else
+	{
+		if (conninfo_changed ||
+			primary_slotname_changed ||
+			(old_hot_standby_feedback != hot_standby_feedback))
+		{
+
+			if (is_slotsync_worker)
+			{
+				ereport(LOG,
+						errmsg("replication slot synchronization worker will restart because of a parameter change"));
+
+				/*
+				 * Reset the last-start time for this worker so that the
+				 * postmaster can restart it without waiting for
+				 * SLOTSYNC_RESTART_INTERVAL_SEC.
+				 */
+				SlotSyncCtx->last_start_time = 0;
+
+				proc_exit(0);
+			}
+
+			parameter_changed = true;
+		}
 	}
 
-	if (conninfo_changed ||
-		primary_slotname_changed ||
-		(old_hot_standby_feedback != hot_standby_feedback))
+	/*
+	 * If we have reached here with a parameter change, we must be running in
+	 * SQL function, emit error in such a case.
+	 */
+	if (parameter_changed)
 	{
-		ereport(LOG,
-				errmsg("replication slot synchronization worker will restart because of a parameter change"));
-
-		/*
-		 * Reset the last-start time for this worker so that the postmaster
-		 * can restart it without waiting for SLOTSYNC_RESTART_INTERVAL_SEC.
-		 */
-		SlotSyncCtx->last_start_time = 0;
-
-		proc_exit(0);
+		Assert(!is_slotsync_worker);
+		ereport(ERROR,
+				errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("replication slot synchronization will stop because of a parameter change"));
 	}
 
 }
 
 /*
- * Interrupt handler for main loop of slot sync worker.
+ * Interrupt handler for process performing slot synchronization.
  */
 static void
 ProcessSlotSyncInterrupts(void)
 {
 	CHECK_FOR_INTERRUPTS();
 
-	if (ShutdownRequestPending)
+	if (SlotSyncCtx->stopSignaled)
 	{
-		ereport(LOG,
-				errmsg("replication slot synchronization worker is shutting down on receiving SIGINT"));
+		if (AmLogicalSlotSyncWorkerProcess())
+		{
+			ereport(LOG,
+					errmsg("replication slot synchronization worker will stop because promotion is triggered"));
 
-		proc_exit(0);
+			proc_exit(0);
+		}
+		else
+		{
+			/*
+			 * For the backend executing SQL function
+			 * pg_sync_replication_slots().
+			 */
+			ereport(ERROR,
+					errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					errmsg("replication slot synchronization will stop because promotion is triggered"));
+		}
 	}
 
 	if (ConfigReloadPending)
@@ -1282,28 +1409,13 @@ wait_for_slot_activity(bool some_slot_updated)
 }
 
 /*
- * Emit an error if a promotion or a concurrent sync call is in progress.
+ * Emit an error if a concurrent sync call is in progress.
  * Otherwise, advertise that a sync is in progress.
  */
 static void
-check_and_set_sync_info(pid_t worker_pid)
+check_and_set_sync_info(pid_t sync_process_pid)
 {
 	SpinLockAcquire(&SlotSyncCtx->mutex);
-
-	/* The worker pid must not be already assigned in SlotSyncCtx */
-	Assert(worker_pid == InvalidPid || SlotSyncCtx->pid == InvalidPid);
-
-	/*
-	 * Emit an error if startup process signaled the slot sync machinery to
-	 * stop. See comments atop SlotSyncCtxStruct.
-	 */
-	if (SlotSyncCtx->stopSignaled)
-	{
-		SpinLockRelease(&SlotSyncCtx->mutex);
-		ereport(ERROR,
-				errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-				errmsg("cannot synchronize replication slots when standby promotion is ongoing"));
-	}
 
 	if (SlotSyncCtx->syncing)
 	{
@@ -1313,13 +1425,16 @@ check_and_set_sync_info(pid_t worker_pid)
 				errmsg("cannot synchronize replication slots concurrently"));
 	}
 
+	/* The pid must not be already assigned in SlotSyncCtx */
+	Assert(SlotSyncCtx->pid == InvalidPid);
+
 	SlotSyncCtx->syncing = true;
 
 	/*
 	 * Advertise the required PID so that the startup process can kill the
-	 * slot sync worker on promotion.
+	 * slot sync process on promotion.
 	 */
-	SlotSyncCtx->pid = worker_pid;
+	SlotSyncCtx->pid = sync_process_pid;
 
 	SpinLockRelease(&SlotSyncCtx->mutex);
 
@@ -1330,10 +1445,11 @@ check_and_set_sync_info(pid_t worker_pid)
  * Reset syncing flag.
  */
 static void
-reset_syncing_flag()
+reset_syncing_flag(void)
 {
 	SpinLockAcquire(&SlotSyncCtx->mutex);
 	SlotSyncCtx->syncing = false;
+	SlotSyncCtx->pid = InvalidPid;
 	SpinLockRelease(&SlotSyncCtx->mutex);
 
 	syncing_slots = false;
@@ -1408,7 +1524,7 @@ ReplSlotSyncWorkerMain(const void *startup_data, size_t startup_data_len)
 
 	/* Setup signal handling */
 	pqsignal(SIGHUP, SignalHandlerForConfigReload);
-	pqsignal(SIGINT, SignalHandlerForShutdownRequest);
+	pqsignal(SIGINT, StatementCancelHandler);
 	pqsignal(SIGTERM, die);
 	pqsignal(SIGFPE, FloatExceptionHandler);
 	pqsignal(SIGUSR1, procsignal_sigusr1_handler);
@@ -1515,7 +1631,8 @@ ReplSlotSyncWorkerMain(const void *startup_data, size_t startup_data_len)
 
 	/*
 	 * The slot sync worker can't get here because it will only stop when it
-	 * receives a SIGINT from the startup process, or when there is an error.
+	 * receives a stop request from the startup process, or when there is an
+	 * error.
 	 */
 	Assert(false);
 }
@@ -1541,7 +1658,7 @@ update_synced_slots_inactive_since(void)
 	if (!StandbyMode)
 		return;
 
-	/* The slot sync worker or SQL function mustn't be running by now */
+	/* The slot sync worker or the SQL function mustn't be running by now */
 	Assert((SlotSyncCtx->pid == InvalidPid) && !SlotSyncCtx->syncing);
 
 	LWLockAcquire(ReplicationSlotControlLock, LW_SHARED);
@@ -1570,16 +1687,18 @@ update_synced_slots_inactive_since(void)
 }
 
 /*
- * Shut down the slot sync worker.
+ * Shut down slot synchronization.
  *
- * This function sends signal to shutdown slot sync worker, if required. It
- * also waits till the slot sync worker has exited or
+ * This function sets stopSignaled=true and wakes up the slot sync process
+ * (either worker or backend running the SQL function pg_sync_replication_slots())
+ * so that worker can exit or the SQL function pg_sync_replication_slots() can
+ * finish. It also waits till the slot sync worker has exited or
  * pg_sync_replication_slots() has finished.
  */
 void
 ShutDownSlotSync(void)
 {
-	pid_t		worker_pid;
+	pid_t		sync_process_pid;
 
 	SpinLockAcquire(&SlotSyncCtx->mutex);
 
@@ -1596,12 +1715,16 @@ ShutDownSlotSync(void)
 		return;
 	}
 
-	worker_pid = SlotSyncCtx->pid;
+	sync_process_pid = SlotSyncCtx->pid;
 
 	SpinLockRelease(&SlotSyncCtx->mutex);
 
-	if (worker_pid != InvalidPid)
-		kill(worker_pid, SIGINT);
+	/*
+	 * Signal process doing slotsync, if any. The process will stop upon
+	 * detecting that the stopSignaled flag is set to true.
+	 */
+	if (sync_process_pid != InvalidPid)
+		kill(sync_process_pid, SIGUSR1);
 
 	/* Wait for slot sync to end */
 	for (;;)
@@ -1750,7 +1873,10 @@ SyncReplicationSlots(WalReceiverConn *wrconn)
 {
 	PG_ENSURE_ERROR_CLEANUP(slotsync_failure_callback, PointerGetDatum(wrconn));
 	{
-		check_and_set_sync_info(InvalidPid);
+		check_and_set_sync_info(MyProcPid);
+
+		/* Check for interrupts and config changes */
+		ProcessSlotSyncInterrupts();
 
 		validate_remote_info(wrconn);
 

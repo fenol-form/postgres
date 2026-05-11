@@ -188,8 +188,8 @@ logicalrep_relmap_update(LogicalRepRelation *remoterel)
 	entry->remoterel.nspname = pstrdup(remoterel->nspname);
 	entry->remoterel.relname = pstrdup(remoterel->relname);
 	entry->remoterel.natts = remoterel->natts;
-	entry->remoterel.attnames = palloc(remoterel->natts * sizeof(char *));
-	entry->remoterel.atttyps = palloc(remoterel->natts * sizeof(Oid));
+	entry->remoterel.attnames = palloc_array(char *, remoterel->natts);
+	entry->remoterel.atttyps = palloc_array(Oid, remoterel->natts);
 	for (i = 0; i < remoterel->natts; i++)
 	{
 		entry->remoterel.attnames[i] = pstrdup(remoterel->attnames[i]);
@@ -249,6 +249,7 @@ logicalrep_get_attrs_str(LogicalRepRelation *remoterel, Bitmapset *atts)
 	{
 		attcnt++;
 		if (attcnt > 1)
+			/* translator: This is a separator in a list of entity names. */
 			appendStringInfoString(&attsbuf, _(", "));
 
 		appendStringInfo(&attsbuf, _("\"%s\""), remoterel->attnames[i]);
@@ -703,8 +704,8 @@ logicalrep_partition_open(LogicalRepRelMapEntry *root,
 		entry->remoterel.nspname = pstrdup(remoterel->nspname);
 		entry->remoterel.relname = pstrdup(remoterel->relname);
 		entry->remoterel.natts = remoterel->natts;
-		entry->remoterel.attnames = palloc(remoterel->natts * sizeof(char *));
-		entry->remoterel.atttyps = palloc(remoterel->natts * sizeof(Oid));
+		entry->remoterel.attnames = palloc_array(char *, remoterel->natts);
+		entry->remoterel.atttyps = palloc_array(Oid, remoterel->natts);
 		for (i = 0; i < remoterel->natts; i++)
 		{
 			entry->remoterel.attnames[i] = pstrdup(remoterel->attnames[i]);

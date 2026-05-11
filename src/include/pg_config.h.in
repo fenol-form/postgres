@@ -472,6 +472,9 @@
 /* Define to 1 if your compiler understands `typeof' or something similar. */
 #undef HAVE_TYPEOF
 
+/* Define to 1 if you have the <uchar.h> header file. */
+#undef HAVE_UCHAR_H
+
 /* Define to 1 if you have the <ucred.h> header file. */
 #undef HAVE_UCRED_H
 
@@ -593,6 +596,14 @@
 /* Define to the version of this package. */
 #undef PACKAGE_VERSION
 
+/* Define to best C++ printf format archetype, usually gnu_printf if
+   available. */
+#undef PG_CXX_PRINTF_ATTRIBUTE
+
+/* Define to best C printf format archetype, usually gnu_printf if available.
+   */
+#undef PG_C_PRINTF_ATTRIBUTE
+
 /* Define to the name of a signed 128-bit integer type. */
 #undef PG_INT128_TYPE
 
@@ -608,9 +619,6 @@
 
 /* PostgreSQL minor version number */
 #undef PG_MINORVERSION_NUM
-
-/* Define to best printf format archetype, usually gnu_printf if available. */
-#undef PG_PRINTF_ATTRIBUTE
 
 /* PostgreSQL version as a string */
 #undef PG_VERSION
@@ -641,6 +649,9 @@
    save a few cycles in md.c, but is not absolutely required. Changing
    RELSEG_SIZE requires an initdb. */
 #undef RELSEG_SIZE
+
+/* The size of `intmax_t', as computed by sizeof. */
+#undef SIZEOF_INTMAX_T
 
 /* The size of `long', as computed by sizeof. */
 #undef SIZEOF_LONG
@@ -800,10 +811,6 @@
 #ifndef __cplusplus
 #undef inline
 #endif
-
-/* Define to keyword to use for C99 restrict support, or to nothing if not
-   supported */
-#undef pg_restrict
 
 /* Define to the equivalent of the C99 'restrict' keyword, or to
    nothing if this is not supported.  Do not define if restrict is

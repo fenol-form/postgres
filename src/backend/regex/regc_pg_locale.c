@@ -23,11 +23,6 @@
 
 static pg_locale_t pg_regex_locale;
 
-static struct pg_locale_struct dummy_c_locale = {
-	.collate_is_c = true,
-	.ctype_is_c = true,
-};
-
 
 /*
  * pg_set_regex_collation: set collation for these functions to obey
@@ -53,33 +48,12 @@ pg_set_regex_collation(Oid collation)
 				 errhint("Use the COLLATE clause to set the collation explicitly.")));
 	}
 
-	if (collation == C_COLLATION_OID)
-	{
-		/*
-		 * Some callers expect regexes to work for C_COLLATION_OID before
-		 * catalog access is available, so we can't call
-		 * pg_newlocale_from_collation().
-		 */
-		locale = &dummy_c_locale;
-	}
-	else
-	{
-		locale = pg_newlocale_from_collation(collation);
+	locale = pg_newlocale_from_collation(collation);
 
-		if (!locale->deterministic)
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("nondeterministic collations are not supported for regular expressions")));
-
-		if (locale->ctype_is_c)
-		{
-			/*
-			 * C/POSIX collations use this path regardless of database
-			 * encoding
-			 */
-			locale = &dummy_c_locale;
-		}
-	}
+	if (!locale->deterministic)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("nondeterministic collations are not supported for regular expressions")));
 
 	pg_regex_locale = locale;
 }
@@ -346,16 +320,18 @@ regc_ctype_get_cache(regc_wc_probefunc probefunc, int cclasscode)
 		max_chr = (pg_wchar) MAX_SIMPLE_CHR;
 #endif
 	}
+	else if (GetDatabaseEncoding() == PG_UTF8)
+	{
+		max_chr = (pg_wchar) MAX_SIMPLE_CHR;
+	}
 	else
 	{
-		if (pg_regex_locale->ctype->max_chr != 0 &&
-			pg_regex_locale->ctype->max_chr <= MAX_SIMPLE_CHR)
-		{
-			max_chr = pg_regex_locale->ctype->max_chr;
-			pcc->cv.cclasscode = -1;
-		}
-		else
-			max_chr = (pg_wchar) MAX_SIMPLE_CHR;
+#if MAX_SIMPLE_CHR >= UCHAR_MAX
+		max_chr = (pg_wchar) UCHAR_MAX;
+		pcc->cv.cclasscode = -1;
+#else
+		max_chr = (pg_wchar) MAX_SIMPLE_CHR;
+#endif
 	}
 
 	/*

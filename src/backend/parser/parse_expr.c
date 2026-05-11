@@ -327,7 +327,7 @@ transformExprRecurse(ParseState *pstate, Node *expr)
 		case T_CaseTestExpr:
 		case T_Var:
 			{
-				result = (Node *) expr;
+				result = expr;
 				break;
 			}
 
@@ -2906,7 +2906,7 @@ make_row_comparison_op(ParseState *pstate, List *opname,
 	 * operators, and see which interpretations (cmptypes) exist for each
 	 * operator.
 	 */
-	opinfo_lists = (List **) palloc(nopers * sizeof(List *));
+	opinfo_lists = palloc_array(List *, nopers);
 	cmptypes = NULL;
 	i = 0;
 	foreach(l, opexprs)
@@ -3241,7 +3241,7 @@ getJsonEncodingConst(JsonFormat *format)
 {
 	JsonEncoding encoding;
 	const char *enc;
-	Name		encname = palloc(sizeof(NameData));
+	Name		encname = palloc_object(NameData);
 
 	if (!format ||
 		format->format_type == JS_FORMAT_DEFAULT ||
@@ -4079,7 +4079,7 @@ transformJsonParseArg(ParseState *pstate, Node *jsexpr, JsonFormat *format,
 
 		if (*exprtype == UNKNOWNOID || typcategory == TYPCATEGORY_STRING)
 		{
-			expr = coerce_to_target_type(pstate, (Node *) expr, *exprtype,
+			expr = coerce_to_target_type(pstate, expr, *exprtype,
 										 TEXTOID, -1,
 										 COERCION_IMPLICIT,
 										 COERCE_IMPLICIT_CAST, -1);
@@ -4285,6 +4285,9 @@ transformJsonFuncExpr(ParseState *pstate, JsonFuncExpr *func)
 {
 	JsonExpr   *jsexpr;
 	Node	   *path_spec;
+	Oid			pathspec_type;
+	int			pathspec_loc;
+	Node	   *coerced_path_spec;
 	const char *func_name = NULL;
 	JsonFormatType default_format;
 
@@ -4500,17 +4503,21 @@ transformJsonFuncExpr(ParseState *pstate, JsonFuncExpr *func)
 	jsexpr->format = func->context_item->format;
 
 	path_spec = transformExprRecurse(pstate, func->pathspec);
-	path_spec = coerce_to_target_type(pstate, path_spec, exprType(path_spec),
-									  JSONPATHOID, -1,
-									  COERCION_EXPLICIT, COERCE_IMPLICIT_CAST,
-									  exprLocation(path_spec));
-	if (path_spec == NULL)
+	pathspec_type = exprType(path_spec);
+	pathspec_loc = exprLocation(path_spec);
+	coerced_path_spec = coerce_to_target_type(pstate, path_spec,
+											  pathspec_type,
+											  JSONPATHOID, -1,
+											  COERCION_EXPLICIT,
+											  COERCE_IMPLICIT_CAST,
+											  pathspec_loc);
+	if (coerced_path_spec == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("JSON path expression must be of type %s, not of type %s",
-						"jsonpath", format_type_be(exprType(path_spec))),
-				 parser_errposition(pstate, exprLocation(path_spec))));
-	jsexpr->path_spec = path_spec;
+						"jsonpath", format_type_be(pathspec_type)),
+				 parser_errposition(pstate, pathspec_loc)));
+	jsexpr->path_spec = coerced_path_spec;
 
 	/* Transform and coerce the PASSING arguments to jsonb. */
 	transformJsonPassingArgs(pstate, func_name,
@@ -4772,7 +4779,7 @@ transformJsonBehavior(ParseState *pstate, JsonExpr *jsexpr,
 				targetcoll != exprcoll)
 				ereport(ERROR,
 						errcode(ERRCODE_COLLATION_MISMATCH),
-						errmsg("the collation of DEFAULT expression conflicts with RETURNING clause"),
+						errmsg("collation of DEFAULT expression conflicts with RETURNING clause"),
 						errdetail("\"%s\" versus \"%s\"",
 								  get_collation_name(exprcoll),
 								  get_collation_name(targetcoll)),
